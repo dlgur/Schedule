@@ -4,6 +4,7 @@ import holidays
 import json
 import os
 from datetime import datetime, date, timedelta
+from streamlit_javascript import st_javascript  # pip install streamlit-javascript
 
 # 1. 페이지 설정 및 디자인 (CSS)
 st.set_page_config(page_title="근무 일정 관리 시스템", layout="wide")
@@ -74,9 +75,22 @@ def add_log(date_str, action, detail):
     })
     save_json(LOG_FILE, logs[-50:])
 
-# 3. 데이터 초기화
+# 3. 데이터 및 기기 감지 초기화
 if 'db' not in st.session_state:
     st.session_state['db'] = load_json(DATA_FILE)
+
+# 자바스크립트로 화면 너비 가져오기
+client_width = st_javascript("window.innerWidth")
+
+# 화면 너비에 따라 초기 모드 설정 (768px 기준으로 모바일 여부 판단)
+if 'view_mode_auto' not in st.session_state:
+    if client_width is not None and client_width > 0:
+        if client_width < 768:
+            st.session_state['view_mode_auto'] = "📱 리스트 보기 (모바일)"
+        else:
+            st.session_state['view_mode_auto'] = "📅 달력 보기 (PC)"
+    else:
+        st.session_state['view_mode_auto'] = "📅 달력 보기 (PC)"
 
 WORKER_COLORS = {
     "박성빈": "#FFD700", "오승현": "#FFB6C1", "우유리": "#98FB98", 
@@ -87,9 +101,12 @@ kr_holidays = holidays.KR(language='ko')
 # 4. 사이드바 제어
 st.sidebar.title("🛠️ 설정 및 관리")
 password = st.sidebar.text_input("관리자 비밀번호", type="password")
-is_admin = (password == "1234") # 실제 비번으로 변경 권장
+is_admin = (password == "1234")
 
-view_mode = st.sidebar.radio("화면 모드", ["📅 달력 보기 (PC)", "📱 리스트 보기 (모바일)"])
+# 자동 설정된 값을 초기값으로 사용하되, 사용자가 수동으로 변경도 가능
+view_mode = st.sidebar.radio("화면 모드", ["📅 달력 보기 (PC)", "📱 리스트 보기 (모바일)"], 
+                             index=0 if st.session_state['view_mode_auto'] == "📅 달력 보기 (PC)" else 1)
+
 selected_month = st.sidebar.selectbox("월 선택", list(range(1, 13)), index=date.today().month - 1)
 
 if is_admin:
@@ -182,7 +199,7 @@ with col_stat:
     all_selected = [n for k, names in st.session_state['db'].items() if k.startswith(prefix) for n in names]
     for name, color in WORKER_COLORS.items():
         count = all_selected.count(name)
-        st.markdown(f"<div style='background-color:{color}; padding:10px; border-radius:5px; margin-bottom:5px; font-weight:bold; border:1px solid #ddd;'>{name}: {count}회</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='background-color:{color}; padding:10px; border-radius:5px; margin-bottom:5px; font-weight:bold; border:1px solid #ddd; color:black;'>{name}: {count}회</div>", unsafe_allow_html=True)
     
     if is_admin and st.button("🔄 데이터 초기화"):
         st.session_state['db'] = {}
