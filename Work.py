@@ -4,7 +4,6 @@ import holidays
 import json
 import os
 from datetime import datetime, date, timedelta
-from streamlit_javascript import st_javascript  # pip install streamlit-javascript
 
 # 1. 페이지 설정 및 디자인 (CSS)
 st.set_page_config(page_title="근무 일정 관리 시스템", layout="wide")
@@ -19,6 +18,11 @@ st.markdown("""
         background-color: #ffffff;
         border-radius: 8px;
     }
+    /* 오늘 날짜 하이라이트 (PC) */
+    .today-box {
+        background-color: #fff9db !important; /* 연한 노란색 */
+        border: 2px solid #fcc419 !important;
+    }
     /* 모바일 카드 스타일 */
     .mobile-card {
         border: 1px solid #ddd;
@@ -27,6 +31,15 @@ st.markdown("""
         margin-bottom: 10px;
         background-color: white;
         box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+    }
+    .today-badge {
+        background-color: #fcc419;
+        color: black;
+        font-size: 0.7rem;
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-left: 5px;
+        vertical-align: middle;
     }
     .worker-tag {
         display: block;
@@ -75,39 +88,24 @@ def add_log(date_str, action, detail):
     })
     save_json(LOG_FILE, logs[-50:])
 
-# 3. 데이터 및 기기 감지 초기화
+# 3. 데이터 초기화
 if 'db' not in st.session_state:
     st.session_state['db'] = load_json(DATA_FILE)
-
-# 자바스크립트로 화면 너비 가져오기
-client_width = st_javascript("window.innerWidth")
-
-# 화면 너비에 따라 초기 모드 설정 (768px 기준으로 모바일 여부 판단)
-if 'view_mode_auto' not in st.session_state:
-    if client_width is not None and client_width > 0:
-        if client_width < 768:
-            st.session_state['view_mode_auto'] = "📱 리스트 보기 (모바일)"
-        else:
-            st.session_state['view_mode_auto'] = "📅 달력 보기 (PC)"
-    else:
-        st.session_state['view_mode_auto'] = "📅 달력 보기 (PC)"
 
 WORKER_COLORS = {
     "박성빈": "#FFD700", "오승현": "#FFB6C1", "우유리": "#98FB98", 
     "이지영": "#ADD8E6", "이혁": "#E6E6FA", "홍시현": "#FFCC99"
 }
 kr_holidays = holidays.KR(language='ko')
+today_val = date.today()
 
 # 4. 사이드바 제어
 st.sidebar.title("🛠️ 설정 및 관리")
 password = st.sidebar.text_input("관리자 비밀번호", type="password")
-is_admin = (password == "1234")
+is_admin = (password == "1234") 
 
-# 자동 설정된 값을 초기값으로 사용하되, 사용자가 수동으로 변경도 가능
-view_mode = st.sidebar.radio("화면 모드", ["📅 달력 보기 (PC)", "📱 리스트 보기 (모바일)"], 
-                             index=0 if st.session_state['view_mode_auto'] == "📅 달력 보기 (PC)" else 1)
-
-selected_month = st.sidebar.selectbox("월 선택", list(range(1, 13)), index=date.today().month - 1)
+view_mode = st.sidebar.radio("화면 모드", ["📅 달력 보기 (PC)", "📱 리스트 보기 (모바일)"], index=1)
+selected_month = st.sidebar.selectbox("월 선택", list(range(1, 13)), index=today_val.month - 1)
 
 if is_admin:
     st.sidebar.success("🔓 관리자 모드 활성화")
@@ -133,12 +131,21 @@ with col_cal:
         for d in range(1, last_day.day + 1):
             this_date = date(current_year, selected_month, d)
             d_str = this_date.strftime('%Y-%m-%d')
+            is_today = (this_date == today_val)
             is_off = (this_date in kr_holidays) or (this_date.weekday() in [0, 6])
             h_name = kr_holidays.get(this_date, "")
             weekday_name = ["월", "화", "수", "목", "금", "토", "일"][this_date.weekday()]
             
-            st.markdown(f"""<div class='mobile-card'><div class='mobile-date' style='color:{"red" if is_off else "black"}; font-weight:bold;'>
-                        {d}일 ({weekday_name}) {h_name}</div>""", unsafe_allow_html=True)
+            # 오늘인 경우 카드 배경색 살짝 변경
+            card_style = "border: 2px solid #fcc419; background-color: #fff9db;" if is_today else ""
+            today_tag = "<span class='today-badge'>TODAY</span>" if is_today else ""
+
+            st.markdown(f"""
+                <div class='mobile-card' style='{card_style}'>
+                    <div style='color:{"red" if is_off else "black"}; font-weight:bold; font-size:1.1rem;'>
+                        {d}일 ({weekday_name}) {h_name} {today_tag}
+                    </div>
+                """, unsafe_allow_html=True)
             
             assigned = st.session_state['db'].get(d_str, [])
             if not is_off:
@@ -150,9 +157,12 @@ with col_cal:
                         add_log(d_str, "수정(모바일)", selected)
                         st.rerun()
                 else:
-                    for name in assigned:
-                        bg = WORKER_COLORS.get(name, "#eee")
-                        st.markdown(f"<span class='worker-tag' style='background-color:{bg};'>{name}</span>", unsafe_allow_html=True)
+                    if assigned:
+                        for name in assigned:
+                            bg = WORKER_COLORS.get(name, "#eee")
+                            st.markdown(f"<span class='worker-tag' style='background-color:{bg};'>{name}</span>", unsafe_allow_html=True)
+                    else:
+                        st.markdown("<small style='color:#ccc;'>배정 인원 없음</small>", unsafe_allow_html=True)
             else:
                 st.markdown("<small style='color:#ccc;'>휴무</small>", unsafe_allow_html=True)
             st.markdown("</div>", unsafe_allow_html=True)
@@ -174,8 +184,12 @@ with col_cal:
                     else:
                         this_date = date(current_year, selected_month, day_counter)
                         d_str = this_date.strftime('%Y-%m-%d')
+                        is_today = (this_date == today_val)
                         is_off = (this_date in kr_holidays) or (this_date.weekday() in [0, 6])
-                        st.markdown(f"<div class='date-header' style='color: {'red' if is_off else 'black'};'>{day_counter}</div>", unsafe_allow_html=True)
+                        
+                        # 오늘 날짜면 class에 today-box 추가
+                        today_class = "today-box" if is_today else ""
+                        st.markdown(f"<div class='date-header {today_class}' style='color: {'red' if is_off else 'black'}; border-radius: 4px; padding-left: 5px;'>{day_counter} {'(오늘)' if is_today else ''}</div>", unsafe_allow_html=True)
                         
                         assigned = st.session_state['db'].get(d_str, [])
                         if not is_off:
@@ -200,9 +214,3 @@ with col_stat:
     for name, color in WORKER_COLORS.items():
         count = all_selected.count(name)
         st.markdown(f"<div style='background-color:{color}; padding:10px; border-radius:5px; margin-bottom:5px; font-weight:bold; border:1px solid #ddd; color:black;'>{name}: {count}회</div>", unsafe_allow_html=True)
-    
-    if is_admin and st.button("🔄 데이터 초기화"):
-        st.session_state['db'] = {}
-        save_json(DATA_FILE, {})
-        add_log("ALL", "초기화", "전체삭제")
-        st.rerun()
