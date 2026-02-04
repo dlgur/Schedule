@@ -237,9 +237,10 @@ with col_stat:
     st.divider()
     st.subheader("💾 내보내기")
     excel_data = to_excel(pd.DataFrame(export_data))
-    st.download_button(label="📊 Excel 다운로드", data=excel_data, file_name=f"근무표_{selected_month}월.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button(label="📊 Excel 다운로드", data=excel_data, file_name=f"청소년_카페_파란_근무표_{selected_month}월.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     if is_admin and st.button("🔄 데이터 초기화"):
         st.session_state['db'] = {}
         save_json(DATA_FILE, {})
         st.rerun()
+
