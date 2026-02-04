@@ -11,7 +11,6 @@ st.set_page_config(page_title="근무 일정 관리 시스템", layout="wide")
 
 st.markdown("""
     <style>
-    /* PC 달력 칸 스타일 */
     [data-testid="column"] {
         height: 250px !important; 
         border: 1px solid #dee2e6;
@@ -19,12 +18,9 @@ st.markdown("""
         background-color: #ffffff;
         border-radius: 8px;
     }
-    /* 강조 효과 */
     .today-box { background-color: #fff9db !important; border: 2px solid #fcc419 !important; }
     .highlight-card { border: 3px solid #4dabf7 !important; box-shadow: 0px 0px 15px rgba(77, 171, 247, 0.4) !important; }
     .dimmed-card { opacity: 0.3; }
-    
-    /* 모바일 카드 스타일 */
     .mobile-card {
         border: 1px solid #ddd;
         border-radius: 10px;
@@ -40,17 +36,16 @@ st.markdown("""
         padding: 2px 6px;
         border-radius: 4px;
         margin-left: 5px;
-        vertical-align: middle;
+        display: inline-block;
     }
     .worker-tag {
-        display: block;
-        padding: 6px 10px;
+        display: inline-block;
+        padding: 4px 10px;
         border-radius: 6px;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: bold;
-        margin-top: 5px;
+        margin: 2px;
         color: black;
-        text-align: center;
         border: 1px solid rgba(0,0,0,0.1);
     }
     .date-header {
@@ -62,7 +57,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 2. 데이터 및 로그 관리 함수
+# 2. 데이터 관리 함수
 DATA_FILE = "schedule_db.json"
 LOG_FILE = "action_log.json"
 
@@ -78,16 +73,6 @@ def load_json(file_path):
 def save_json(file_path, data):
     with open(file_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-
-def add_log(date_str, action, detail):
-    logs = load_json(LOG_FILE)
-    logs.append({
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "date": date_str,
-        "action": action,
-        "detail": str(detail)
-    })
-    save_json(LOG_FILE, logs[-50:])
 
 def to_excel(df):
     output = BytesIO()
@@ -115,14 +100,6 @@ view_mode = st.sidebar.radio("화면 모드", ["📅 달력 보기 (PC)", "📱 
 selected_month = st.sidebar.selectbox("월 선택", list(range(1, 13)), index=today_val.month - 1)
 filter_name = st.sidebar.selectbox("🔍 근무자 필터링", ["전체보기"] + list(WORKER_COLORS.keys()))
 
-if is_admin:
-    st.sidebar.success("🔓 관리자 모드 활성화")
-    if st.sidebar.checkbox("📜 변경 로그 확인"):
-        st.sidebar.write("### 최근 변경 기록")
-        st.sidebar.table(load_json(LOG_FILE))
-else:
-    st.sidebar.info("🔒 조회 전용 모드")
-
 # 5. 날짜 계산
 current_year = 2026
 first_day = date(current_year, selected_month, 1)
@@ -149,36 +126,41 @@ with col_cal:
             if filter_name != "전체보기" and not is_match: card_class = "dimmed-card"
             today_style = "border: 2px solid #fcc419; background-color: #fff9db;" if is_today else ""
             
-            # 카드 컨테이너 시작
-            st.markdown(f"""
-                <div class='mobile-card {card_class}' style='{today_style}'>
-                    <div style='color:{"red" if is_off else "black"}; font-weight:bold; font-size:1.1rem;'>
-                        {d}일 ({["월","화","수","목","금","토","일"][this_date.weekday()]}) 
-                        {kr_holidays.get(this_date, "")} {"<span class='today-badge'>TODAY</span>" if is_today else ""}
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+            # (수정 포인트) 카드 헤더를 하나의 markdown으로 출력
+            today_badge = "<span class='today-badge'>TODAY</span>" if is_today else ""
+            holiday_name = kr_holidays.get(this_date, "")
+            weekday = ["월","화","수","목","금","토","일"][this_date.weekday()]
             
-            # 근무자 표시 및 수정 (태그 오류 방지를 위해 div 밖에서 처리)
+            card_html = f"""
+            <div class='mobile-card {card_class}' style='{today_style}'>
+                <div style='color:{"red" if is_off else "black"}; font-weight:bold; font-size:1.1rem;'>
+                    {d}일 ({weekday}) {holiday_name} {today_badge}
+                </div>
+            </div>
+            """
+            st.markdown(card_html, unsafe_allow_html=True)
+            
+            # 근무자 표시 (관리자 모드일 때는 위젯을 사용해야 하므로 분리)
             if not is_off:
                 if is_admin:
-                    selected = st.multiselect(f"m_edit_{d}", list(WORKER_COLORS.keys()), default=assigned, key=f"mob_{d_str}", label_visibility="collapsed")
+                    selected = st.multiselect(f"e_{d}", list(WORKER_COLORS.keys()), default=assigned, key=f"m_{d_str}", label_visibility="collapsed")
                     if selected != assigned:
                         st.session_state['db'][d_str] = selected
                         save_json(DATA_FILE, st.session_state['db'])
-                        add_log(d_str, "수정(모바일)", selected)
                         st.rerun()
                 else:
                     if assigned:
+                        tags_html = ""
                         for name in assigned:
                             op = "1.0" if (filter_name == "전체보기" or name == filter_name) else "0.3"
-                            st.markdown(f"<span class='worker-tag' style='background-color:{WORKER_COLORS.get(name)}; opacity:{op};'>{name}</span>", unsafe_allow_html=True)
+                            tags_html += f"<span class='worker-tag' style='background-color:{WORKER_COLORS.get(name)}; opacity:{op};'>{name}</span>"
+                        st.markdown(f"<div>{tags_html}</div>", unsafe_allow_html=True)
                     else:
-                        st.markdown("<small style='color:#ccc;'>배정 인원 없음</small>", unsafe_allow_html=True)
+                        st.caption("배정 인원 없음")
             else:
-                st.markdown("<small style='color:#ccc;'>휴무</small>", unsafe_allow_html=True)
+                st.caption("휴무")
             
-            st.markdown("<div style='margin-bottom:20px;'></div>", unsafe_allow_html=True)
+            st.write("") # 간격 확보
 
     else: # PC 달력 보기
         header_cols = st.columns(7)
@@ -209,11 +191,10 @@ with col_cal:
                         
                         if not is_off:
                             if is_admin:
-                                selected = st.multiselect(f"p_edit_{day_counter}", list(WORKER_COLORS.keys()), default=assigned, key=f"pc_{d_str}", label_visibility="collapsed")
+                                selected = st.multiselect(f"p_{day_counter}", list(WORKER_COLORS.keys()), default=assigned, key=f"pc_{d_str}", label_visibility="collapsed")
                                 if selected != assigned:
                                     st.session_state['db'][d_str] = selected
                                     save_json(DATA_FILE, st.session_state['db'])
-                                    add_log(d_str, "수정(PC)", selected)
                                     st.rerun()
                             else:
                                 for name in assigned:
@@ -224,16 +205,7 @@ with col_cal:
 with col_stat:
     st.subheader("📊 통계")
     prefix = f"2026-{selected_month:02d}"
-    
-    export_data = []
-    all_selected_workers = []
-    
-    for d in range(1, last_day.day + 1):
-        d_date = date(2026, selected_month, d)
-        d_str = d_date.strftime('%Y-%m-%d')
-        assigned = st.session_state['db'].get(d_str, [])
-        all_selected_workers.extend(assigned)
-        export_data.append({"날짜": d_str, "요일": ["월","화","수","목","금","토","일"][d_date.weekday()], "근무자": ", ".join(assigned), "비고": kr_holidays.get(d_date, "")})
+    all_selected_workers = [n for k, names in st.session_state['db'].items() if k.startswith(prefix) for n in names]
     
     for name, color in WORKER_COLORS.items():
         if filter_name != "전체보기" and name != filter_name: continue
@@ -242,10 +214,13 @@ with col_stat:
     
     st.divider()
     st.subheader("💾 내보내기")
+    
+    export_data = []
+    for d in range(1, last_day.day + 1):
+        d_date = date(current_year, selected_month, d)
+        d_str = d_date.strftime('%Y-%m-%d')
+        assigned = st.session_state['db'].get(d_str, [])
+        export_data.append({"날짜": d_str, "요일": ["월","화","수","목","금","토","일"][d_date.weekday()], "근무자": ", ".join(assigned), "비고": kr_holidays.get(d_date, "")})
+    
     excel_data = to_excel(pd.DataFrame(export_data))
     st.download_button(label="📊 Excel 다운로드", data=excel_data, file_name=f"근무표_{selected_month}월.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-    if is_admin and st.button("🔄 데이터 초기화"):
-        st.session_state['db'] = {}
-        save_json(DATA_FILE, {})
-        st.rerun()
