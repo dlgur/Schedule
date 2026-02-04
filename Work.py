@@ -145,19 +145,21 @@ with col_cal:
             is_today = (this_date == today_val)
             is_off = (this_date in kr_holidays) or (this_date.weekday() in [0, 6])
             
-            # 스타일 결정
             card_class = "highlight-card" if (filter_name != "전체보기" and is_match) else ""
             if filter_name != "전체보기" and not is_match: card_class = "dimmed-card"
             today_style = "border: 2px solid #fcc419; background-color: #fff9db;" if is_today else ""
             
+            # 카드 컨테이너 시작
             st.markdown(f"""
                 <div class='mobile-card {card_class}' style='{today_style}'>
                     <div style='color:{"red" if is_off else "black"}; font-weight:bold; font-size:1.1rem;'>
                         {d}일 ({["월","화","수","목","금","토","일"][this_date.weekday()]}) 
                         {kr_holidays.get(this_date, "")} {"<span class='today-badge'>TODAY</span>" if is_today else ""}
                     </div>
+                </div>
                 """, unsafe_allow_html=True)
             
+            # 근무자 표시 및 수정 (태그 오류 방지를 위해 div 밖에서 처리)
             if not is_off:
                 if is_admin:
                     selected = st.multiselect(f"m_edit_{d}", list(WORKER_COLORS.keys()), default=assigned, key=f"mob_{d_str}", label_visibility="collapsed")
@@ -167,12 +169,16 @@ with col_cal:
                         add_log(d_str, "수정(모바일)", selected)
                         st.rerun()
                 else:
-                    for name in assigned:
-                        op = "1.0" if (filter_name == "전체보기" or name == filter_name) else "0.3"
-                        st.markdown(f"<span class='worker-tag' style='background-color:{WORKER_COLORS.get(name)}; opacity:{op};'>{name}</span>", unsafe_allow_html=True)
+                    if assigned:
+                        for name in assigned:
+                            op = "1.0" if (filter_name == "전체보기" or name == filter_name) else "0.3"
+                            st.markdown(f"<span class='worker-tag' style='background-color:{WORKER_COLORS.get(name)}; opacity:{op};'>{name}</span>", unsafe_allow_html=True)
+                    else:
+                        st.markdown("<small style='color:#ccc;'>배정 인원 없음</small>", unsafe_allow_html=True)
             else:
                 st.markdown("<small style='color:#ccc;'>휴무</small>", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+            
+            st.markdown("<div style='margin-bottom:20px;'></div>", unsafe_allow_html=True)
 
     else: # PC 달력 보기
         header_cols = st.columns(7)
@@ -237,10 +243,9 @@ with col_stat:
     st.divider()
     st.subheader("💾 내보내기")
     excel_data = to_excel(pd.DataFrame(export_data))
-    st.download_button(label="📊 Excel 다운로드", data=excel_data, file_name=f"청소년_카페_파란_근무표_{selected_month}월.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    st.download_button(label="📊 Excel 다운로드", data=excel_data, file_name=f"근무표_{selected_month}월.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
     if is_admin and st.button("🔄 데이터 초기화"):
         st.session_state['db'] = {}
         save_json(DATA_FILE, {})
         st.rerun()
-
