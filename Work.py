@@ -22,36 +22,47 @@ st.markdown("""
 # 2. Google Sheets 연결 설정
 # Streamlit Cloud 설정(Secrets)에 시트 URL을 넣어야 작동합니다.
 conn = st.connection("gsheets", type=GSheetsConnection)
+# 1. 데이터 저장 함수 개선 (읽기 과정을 제거하여 API 호출 횟수를 절반으로 줄임)
+def save_to_sheets(date_str, workers_list):
+    try:
+        # 기존: 매번 conn.read() 호출 -> 버그의 원인
+        # 개선: 현재 세션에 있는 데이터를 기반으로 데이터프레임 생성
+        new_db = st.session_state['db'].copy()
+        new_db[date_str] = workers_list
+        
+        # 전체 DB를 데이터프레임으로 변환
+        rows = []
+        for d, ws in new_db.items():
+            rows.append({"date": d, "workers": ",".join(ws)})
+        df = pd.DataFrame(rows)
+        
+        # 구글 시트에 쓰기 작업만 수행
+        conn.update(data=df)
+        
+        # 메모리 데이터 즉시 갱신 (리런 시 읽어올 필요 없게 함)
+        st.session_state['db'] = new_db
+        st.cache_data.clear()
+        
+    except Exception as e:
+        # API 할당량 초과나 일시적 오류 시 사용자에게 알림
+        st.error("구글 서버 응답이 지연되고 있습니다. 3초 후 다시 시도해주세요.")
+        print(f"DEBUG API Error: {e}")
 
+# 2. 데이터 로드 함수 (앱 시작 시에만 호출)
 def load_data():
     try:
-        # 시트에서 데이터 읽기
-        df = conn.read(ttl=0) # 캐시 없이 실시간 로드
-        # 데이터프레임을 딕셔너리로 변환하여 세션에 저장
+        # 캐시 유지 시간을 1분 정도로 설정하여 잦은 읽기 방지
+        df = conn.read(ttl="1m") 
+        if df is None or df.empty:
+            return {}
+            
         db = {}
         for _, row in df.iterrows():
-            if pd.notna(row['workers']):
-                db[str(row['date'])] = row['workers'].split(',')
+            if pd.notna(row['date']) and pd.notna(row['workers']):
+                db[str(row['date'])] = str(row['workers']).split(',')
         return db
-    except:
+    except Exception:
         return {}
-
-def save_to_sheets(date_str, workers_list):
-    # 현재 전체 데이터 로드
-    df = conn.read(ttl=0)
-    
-    # 해당 날짜 데이터 업데이트 또는 추가
-    new_row = pd.DataFrame({"date": [date_str], "workers": [",".join(workers_list)]})
-    
-    if date_str in df['date'].values:
-        df.loc[df['date'] == date_str, 'workers'] = ",".join(workers_list)
-    else:
-        df = pd.concat([df, new_row], ignore_index=True)
-    
-    # 시트에 다시 쓰기
-    conn.update(data=df)
-    st.cache_data.clear()
-
 # 3. 데이터 초기화
 if 'db' not in st.session_state:
     st.session_state['db'] = load_data()
@@ -164,4 +175,5 @@ with col_stat:
     
     excel_data = to_excel(pd.DataFrame(export_data))
     st.download_button(label="📊 Excel 다운로드", data=excel_data, file_name=f"근무표_{selected_month}월.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
 
