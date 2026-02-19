@@ -2,3 +2,4 @@ streamlit
 pandas
 holidays
 openpyxl
+st-gsheets-connection
