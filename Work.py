@@ -266,7 +266,7 @@ if main_menu == "📅 근무 일정 관리":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 # ==========================================
-# 메뉴 B: 📦 재고 관리 시스템 (TypeError 버그 완벽 해결 버전)
+# 메뉴 B: 📦 재고 관리 시스템 (KeyError 버그 완벽 해결 버전)
 # ==========================================
 elif main_menu == "📦 재고 관리 시스템":
     # 타이틀 라인과 실시간 새로고침 버튼 배치
@@ -323,27 +323,36 @@ elif main_menu == "📦 재고 관리 시스템":
         if not display_df.empty:
             display_df[["보유 재고(박스 환산)", "제조 가능 음료수(추산)", "_raw_drinks"]] = display_df.apply(process_rows, axis=1)
             
-            # 노출할 최종 컬럼 목록 확정
+            # 부족 품목 상단 요약 브리핑 (텍스트 알림으로 가독성 보완)
+            low_stock_items = display_df[display_df["_raw_drinks"] <= 10]["품목명"].tolist()
+            warning_stock_items = display_df[(display_df["_raw_drinks"] > 10) & (display_df["_raw_drinks"] <= 30)]["품목명"].tolist()
+            
+            if low_stock_items:
+                st.error(f"🚨 **재고 고갈 위험 (10잔 이하):** {', '.join(low_stock_items)} -> 빠른 발주 필요!")
+            elif warning_stock_items:
+                st.warning(f"⚠️ **재고 부족 주의 (30잔 이하):** {', '.join(warning_stock_items)}")
+
+            # 노출할 최종 컬럼 목록 확정 및 인덱스 초기화
             cols_to_show = ["품목코드", "품목명", "수량", "보유 재고(박스 환산)", "제조 가능 음료수(추산)", "비고"]
             existing_cols = [c for c in cols_to_show if c in display_df.columns]
-
-            # 2. 10잔 이하 강조 기능 스타일링 규칙 정의
-            def highlight_low_stock(row):
-                # row는 데이터프레임 전체 열을 가지고 있으므로 안전하게 검색 가능
-                styles = [''] * len(existing_cols)
-                if row["_raw_drinks"] <= 10:
-                    styles = ['background-color: #ffdde1; color: #c92a2a; font-weight: bold;'] * len(existing_cols)
-                elif row["_raw_drinks"] <= 30:
-                    styles = ['background-color: #fff3bf; color: #e67e22;'] * len(existing_cols)
-                return pd.Series(styles, index=existing_cols)
-
-            # [💡 버그 해결] 스타일러를 입히기 전에 화면에 노출할 컬럼과 렌더링에 필요한 컬럼만 추출하여 가공합니다.
-            # 스타일을 적용할 대상을 existing_cols로 제한하되, 조건 검사는 axis=1(로우 단위) 전체 열 기준으로 수행
-            styled_df = display_df.style.apply(highlight_low_stock, axis=1, subset=existing_cols)
             
-            # 스트림릿에는 스타일이 입혀진 결과만 담백하게 전달합니다.
+            # [💡 완벽한 버그 해결책] 스타일러 내부 람다식에서 원본 display_df의 index를 이용해 _raw_drinks 값을 직접 조회
+            # 이렇게 하면 판다스가 로우를 자르든 말든 인덱스로 원본 수량을 정확히 찾아와 KeyError가 절대로 발생하지 않습니다.
+            def style_by_index(row):
+                idx = row.name
+                raw_drinks_val = display_df.loc[idx, "_raw_drinks"]
+                
+                if raw_drinks_val <= 10:
+                    return ['background-color: #ffdde1; color: #c92a2a; font-weight: bold;'] * len(row)
+                elif raw_drinks_val <= 30:
+                    return ['background-color: #fff3bf; color: #e67e22;'] * len(row)
+                return [''] * len(row)
+
+            # 필요한 컬럼 데이터프레임만 딱 잘라서 스타일을 적용
+            final_view_df = display_df[existing_cols]
+            styled_df = final_view_df.style.apply(style_by_index, axis=1)
+            
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
-            
             st.caption("💡 **안내**: 제조 가능 음료수가 **10잔 이하**인 품목은 <span style='color:#c92a2a; font-weight:bold;'>빨간색</span>, **30잔 이하**는 <span style='color:#e67e22; font-weight:bold;'>노란색</span>으로 강조 표시됩니다. (❌ 표시 품목은 계산 제외 자재입니다.)", unsafe_allow_html=True)
         else:
             st.info("조회할 재고 데이터가 없습니다.")
