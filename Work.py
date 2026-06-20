@@ -292,7 +292,7 @@ elif main_menu == "📦 재고 관리 시스템":
             
     sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["🔍 현재 재고 조회", "🔄 재고 입/출고", "➕ 신규 품목 등록", "📜 수정 내역 로그"])
     
-    # --- 서브탭 1: 현재 재고 조회 (강조 및 계산 제외 기능 탑재) ---
+# --- 서브탭 1: 현재 재고 조회 (KeyError 버그 해결 버전) ---
     with sub_tab1:
         st.subheader("🔍 실시간 물류 현황")
         search_keyword = st.text_input("품목명 검색", key="inv_search")
@@ -331,16 +331,18 @@ elif main_menu == "📦 재고 관리 시스템":
                 # 계산 제외품이 아니고, 추정 잔수가 10잔 이하인 경우 색상 마킹
                 if row["_raw_drinks"] <= 10:
                     return ['background-color: #ffdde1; color: #c92a2a; font-weight: bold;'] * len(row)
-                elif row["_raw_drinks"] <= 30: # (옵션) 30잔 이하는 노란색 주의 경고
+                elif row["_raw_drinks"] <= 30: # 30잔 이하는 노란색 주의 경고
                     return ['background-color: #fff3bf; color: #e67e22;'] * len(row)
                 return [''] * len(row)
 
+            # [💡 핵심 수정] 원본 데이터 프레임 전체에 스타일 규칙을 먼저 적용합니다.
+            styled_df = display_df.style.apply(highlight_low_stock, axis=1)
+            
+            # 노출할 컬럼만 필터링하여 렌더링하도록 변경 (숨김 열 에러 방지)
             cols_to_show = ["품목코드", "품목명", "수량", "보유 재고(박스 환산)", "제조 가능 음료수(추산)", "비고"]
             existing_cols = [c for c in cols_to_show if c in display_df.columns]
             
-            # 판다스 스타일러 적용하여 가독성 증대
-            styled_df = display_df[existing_cols].style.apply(highlight_low_stock, axis=1)
-            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            st.dataframe(styled_df, subset=existing_cols, use_container_width=True, hide_index=True)
             
             st.caption("💡 **안내**: 제조 가능 음료수가 **10잔 이하**인 품목은 <span style='color:#c92a2a; font-weight:bold;'>빨간색</span>, **30잔 이하**는 <span style='color:#e67e22; font-weight:bold;'>노란색</span>으로 강조 표시됩니다. (❌ 표시 품목은 계산 제외 자재입니다.)", unsafe_allow_html=True)
         else:
