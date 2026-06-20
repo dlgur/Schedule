@@ -63,16 +63,31 @@ def to_excel(df):
         df.to_excel(writer, index=False, sheet_name='데이터수집')
     return output.getvalue()
 
+구글 시트의 탭 구성(구조)을 잡았는데도 이 에러가 여전히 발생한다면, streamlit-gsheets 라이브러리가 첫 번째 탭을 인식하는 기본 방식과 내부 설정 이름이 어긋나서 그렇습니다.
+
+현재 작성되어 있는 기존 코드의 load_schedule_data() 함수는 worksheet 지정 없이 conn.read()를 바로 호출하고 있습니다. 이 경우 라이브러리는 무조건 구글 시트의 맨 첫 번째 탭을 읽으려고 시도합니다.
+
+만약 스프레드시트의 첫 번째 탭 이름을 영어 소문자 sheet1이나 다른 이름으로 바꾸셨거나, 순서가 꼬였다면 라이브러리가 길을 잃고 WorksheetNotFound 에러를 뿜을 수 있습니다.
+
+이를 완벽하게 해결하기 위해 코드의 데이터 로드 로직을 명확한 탭 이름 지정 방식으로 수정하는 것이 가장 안전합니다.
+
+🛠️ 코드 수정 및 동기화 (이 부분만 덮어씌우세요)
+구글 시트의 탭 이름을 아래와 같이 3개로 확실히 정하셨다면, 코드 상단의 3. 데이터베이스 연결 섹션에 있는 로드 함수들을 아래 코드로 깔끔하게 교체해 주세요.
+
+Python
 # ==========================================
-# 3. 데이터베이스 연결 (Google Sheets)
+# 3. 데이터베이스 연결 (Google Sheets) - 에러 방지 보완본
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- [DB 함수] 1. 근무 일정 데이터 로드 ---
 def load_schedule_data():
     try:
-        # 기존 근무 표가 있는 기본 워크시트 로드 (가장 첫 번째 시트)
-        df = conn.read(ttl="1m") 
+        # 💡 첫 번째 탭 이름을 '근무표' 또는 'Sheet1' 등 명확하게 지정해 줍니다.
+        # 여기서는 구글 시트의 첫 번째 탭 이름이 "Sheet1"이라고 가정합니다. 
+        # 만약 한글로 '근무표'라고 하셨다면 worksheet="근무표" 로 수정하세요!
+        df = conn.read(worksheet="Sheet1", ttl="1m") 
+        
         if df is None or df.empty or 'date' not in df.columns:
             return {}
         db = {}
@@ -80,8 +95,27 @@ def load_schedule_data():
             if pd.notna(row['date']) and pd.notna(row['workers']):
                 db[str(row['date'])] = str(row['workers']).split(',')
         return db
-    except:
+    except Exception as e:
+        # 에러 발생 시 앱이 완전히 멈추지 않도록 빈 사전 반환
         return {}
+
+# --- [DB 함수] 2. 재고 및 로그 데이터 로드 ---
+def load_inventory_data():
+    # 구글 시트에 아직 탭이 없거나 로딩 오류가 날 때를 대비해 기본 구조 선언
+    df_inv = pd.DataFrame(columns=["품목코드", "품목명", "수량", "단가", "비고"])
+    df_logs = pd.DataFrame(columns=["일시", "작업구분", "품목명", "내용", "작업자"])
+    
+    try:
+        df_inv = conn.read(worksheet="inventory", ttl="0m")
+    except Exception as e:
+        st.sidebar.error("⚠️ 구글 시트에서 'inventory' 탭을 찾을 수 없습니다.")
+        
+    try:
+        df_logs = conn.read(worksheet="logs", ttl="0m")
+    except Exception as e:
+        st.sidebar.error("⚠️ 구글 시트에서 'logs' 탭을 찾을 수 없습니다.")
+        
+    return df_inv, df_logs
 
 # --- [DB 함수] 2. 재고 및 로그 데이터 로드 ---
 def load_inventory_data():
