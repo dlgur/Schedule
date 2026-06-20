@@ -6,12 +6,10 @@ from datetime import datetime, date, timedelta
 from io import BytesIO
 
 # ==========================================
-# 1. 페이지 공통 초기 설정 및 DB 연결
+# 1. 페이지 설정 및 공통 CSS 디자인
 # ==========================================
-# ⚠️ st.set_page_config는 오직 메인 스크립트 최상단에서 '한 번만' 호출되어야 합니다.
-st.set_page_config(page_title="통합 근무 관리 시스템", layout="wide")
+st.set_page_config(page_title="통합 매니지먼트 시스템", layout="wide")
 
-# CSS 스타일 정의 (모든 페이지 공통 적용)
 st.markdown("""
     <style>
     [data-testid="column"] {
@@ -58,18 +56,22 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 엑셀 다운로드 유틸리티 함수
+# 2. 유틸리티 함수 (엑셀 변환)
 def to_excel(df):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='근무일정')
+        df.to_excel(writer, index=False, sheet_name='데이터수집')
     return output.getvalue()
 
-# 구글 시트 커넥션 및 데이터 로드
+# ==========================================
+# 3. 데이터베이스 연결 (Google Sheets)
+# ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-def load_data():
+# --- [DB 함수] 1. 근무 일정 데이터 로드 ---
+def load_schedule_data():
     try:
+        # 기존 근무 표가 있는 기본 워크시트 로드 (가장 첫 번째 시트)
         df = conn.read(ttl="1m") 
         if df is None or df.empty or 'date' not in df.columns:
             return {}
@@ -81,21 +83,21 @@ def load_data():
     except:
         return {}
 
-def save_to_sheets(date_str, workers_list):
+# --- [DB 함수] 2. 재고 및 로그 데이터 로드 ---
+def load_inventory_data():
     try:
-        new_db = st.session_state['db'].copy()
-        new_db[date_str] = workers_list
-        rows = [{"date": d, "workers": ",".join(ws)} for d, ws in new_db.items() if ws]
-        df = pd.DataFrame(rows)
-        conn.update(data=df)
-        st.session_state['db'] = new_db
-        st.cache_data.clear()
+        df_inv = conn.read(worksheet="inventory", ttl="0m") # 재고는 실시간 조회가 중요하므로 ttl=0
+        df_logs = conn.read(worksheet="logs", ttl="0m")
+        return df_inv, df_logs
     except Exception as e:
-        st.error(f"저장 중 오류가 발생했습니다. ({e})")
+        # 시트가 비어있거나 없을 때 예외 처리 및 기본 프레임 반환
+        df_inv = pd.DataFrame(columns=["품목코드", "품목명", "수량", "단가", "비고"])
+        df_logs = pd.DataFrame(columns=["일시", "작업구분", "품목명", "내용", "작업자"])
+        return df_inv, df_logs
 
-# 전역 데이터 초기화
+# 데이터 및 설정 초기화
 if 'db' not in st.session_state:
-    st.session_state['db'] = load_data()
+    st.session_state['db'] = load_schedule_data()
 
 WORKER_COLORS = {
     "박성빈": "#FFD700", "오승현": "#FFB6C1", "우유리": "#98FB98", 
@@ -105,18 +107,50 @@ kr_holidays = holidays.KR(language='ko')
 today_val = date.today()
 current_year = 2026
 
+# ==========================================
+# 4. 사이드바 메인 공통 제어 (권한 및 메뉴)
+# ==========================================
+st.sidebar.title("⚙️ 통합 관리 시스템")
+
+# 비밀번호 통합 검증 (재고 관리, 근무 수정 공용)
+password = st.sidebar.text_input("관리자 비밀번호", type="password")
+is_admin = (password == "1234") 
+
+if is_admin:
+    st.sidebar.success("🔓 관리자 권한 활성화")
+else:
+    st.sidebar.info("👁️ 조회 전용 모드")
+
+st.sidebar.divider()
+
+# 대메뉴 전환 기능
+main_menu = st.sidebar.radio("원하는 시스템을 선택하세요", ["📅 근무 일정 관리", "📦 재고 관리 시스템"])
+
+st.sidebar.divider()
+
 
 # ==========================================
-# 2. 각 페이지별 독립 함수(콘텐츠) 정의
+# 메뉴 A: 📅 근무 일정 관리 (기존 기능 완전히 유지)
 # ==========================================
+if main_menu == "📅 근무 일정 관리":
+    
+    # 근무 일정 전용 사이드바 옵션들
+    view_mode = st.sidebar.radio("화면 모드", ["📅 달력 보기 (PC)", "📱 리스트 보기 (모바일)"], index=1)
+    selected_month = st.sidebar.selectbox("월 선택", list(range(1, 13)), index=today_val.month - 1)
+    filter_name = st.sidebar.selectbox("🔍 근무자 필터링", ["전체보기"] + list(WORKER_COLORS.keys()))
 
-# 📄 [페이지 1]: 기존 근무 일정 관리 및 달력
-def show_schedule_page():
-    # 사이드바 제어 설정 (페이지 내부에서 동작할 사이드바 위젯들)
-    st.sidebar.subheader("📅 일정 필터 옵션")
-    view_mode = st.sidebar.radio("화면 모드", ["📅 달력 보기 (PC)", "📱 리스트 보기 (모바일)"], index=1, key="view_mode")
-    selected_month = st.sidebar.selectbox("월 선택", list(range(1, 13)), index=today_val.month - 1, key="selected_month")
-    filter_name = st.sidebar.selectbox("🔍 근무자 필터링", ["전체보기"] + list(WORKER_COLORS.keys()), key="filter_name")
+    # 근무자 데이터 저장 함수
+    def save_to_sheets(date_str, workers_list):
+        try:
+            new_db = st.session_state['db'].copy()
+            new_db[date_str] = workers_list
+            rows = [{"date": d, "workers": ",".join(ws)} for d, ws in new_db.items() if ws]
+            df = pd.DataFrame(rows)
+            conn.update(data=df)
+            st.session_state['db'] = new_db
+            st.cache_data.clear()
+        except Exception as e:
+            st.error(f"저장 중 오류가 발생했습니다. 잠시 후 다시 시도하세요. ({e})")
 
     # 날짜 계산
     first_day = date(current_year, selected_month, 1)
@@ -150,7 +184,7 @@ def show_schedule_page():
                 """, unsafe_allow_html=True)
                 
                 if not is_off:
-                    if st.session_state.get('is_admin', False):
+                    if is_admin:
                         new = st.multiselect(f"m_edit_{d}", list(WORKER_COLORS.keys()), default=assigned, key=f"m_{d_str}", label_visibility="collapsed")
                         if new != assigned:
                             save_to_sheets(d_str, new)
@@ -192,7 +226,7 @@ def show_schedule_page():
                             st.markdown(f"<div class='date-header {box_class}' style='{dim_style} color: {'red' if is_off else 'black'};'>{day_counter}</div>", unsafe_allow_html=True)
                             
                             if not is_off:
-                                if st.session_state.get('is_admin', False):
+                                if is_admin:
                                     new = st.multiselect(f"p_edit_{day_counter}", list(WORKER_COLORS.keys()), default=assigned, key=f"p_{t_str}", label_visibility="collapsed")
                                     if new != assigned:
                                         save_to_sheets(t_str, new)
@@ -202,7 +236,6 @@ def show_schedule_page():
                                         st.markdown(f"<span class='worker-tag' style='background-color:{WORKER_COLORS[n]}'>{n}</span>", unsafe_allow_html=True)
                             day_counter += 1
 
-    # 우측 통계 및 엑셀 출력 레이아웃
     with col_stat:
         st.subheader("📊 통계")
         export_data = []
@@ -236,47 +269,140 @@ def show_schedule_page():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
-
-# 📄 [페이지 2]: 신규 추가하고 싶은 기능 화면 (예: 공지사항 또는 마이페이지 설정 등)
-def show_management_page():
-    st.title("👤 근무자 인적사항 및 시스템 관리")
-    st.write("이 페이지는 멀티페이지 예시 공간입니다. 신규 근무자 추가 정보입력 대시보드나 공지사항 탭 등으로 커스텀할 수 있습니다.")
-    
-    st.subheader("📋 현재 등록된 고정 근무자 리스트")
-    df_workers = pd.DataFrame([
-        {"근무자명": name, "식별 컬러색상": color, "소속": "운영팀"} 
-        for name, color in WORKER_COLORS.items()
-    ])
-    st.table(df_workers)
-    
-    st.subheader("📢 관리자 알림 설정")
-    if st.session_state.get('is_admin', False):
-        st.text_area("근무자들에게 전달할 공지사항을 입력하세요", placeholder="여기에 작성한 내용은 저장할 수 있습니다.")
-        st.button("공지사항 저장 (예시용)")
-    else:
-        st.info("🔒 공지사항 작성 기능은 관리자 비밀번호 인증 시에만 활성화됩니다.")
-
-
 # ==========================================
-# 3. 사이드바 공통 관리자 인증 및 내비게이션 제어
+# 메뉴 B: 📦 재고 관리 시스템 (구글 시트 저장 및 로그 기능 추가)
 # ==========================================
-st.sidebar.title("⚙️ 시스템 메인 제어")
+elif main_menu == "📦 재고 관리 시스템":
+    st.title("📦 재고 관리 및 수불대장")
+    
+    # 구글 시트로부터 재고 데이터 로드
+    df_inv, df_logs = load_inventory_data()
+    
+    # 내부 서브 탭 분할
+    sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["🔍 현재 재고 조회", "🔄 재고 입/출고", "➕ 신규 품목 등록", "📜 수정 내역 로그"])
+    
+    # --- 서브탭 1: 현재 재고 조회 (비밀번호 불필요) ---
+    with sub_tab1:
+        st.subheader("🔍 실시간 재고 현황")
+        search_keyword = st.text_input("품목명 검색", key="inv_search")
+        
+        if search_keyword:
+            filtered_df = df_inv[df_inv["품목명"].str.contains(search_keyword, na=False)]
+        else:
+            filtered_df = df_inv
 
-# 공통 비밀번호 확인
-password = st.sidebar.text_input("🔑 관리자 비밀번호", type="password")
-st.session_state['is_admin'] = (password == "1234")
+        st.dataframe(filtered_df, use_container_width=True, hide_index=True)
+        
+        st.divider()
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric(label="총 품목 종수", value=len(df_inv))
+        with col2:
+            if not df_inv.empty:
+                df_inv["수량"] = pd.to_numeric(df_inv["수량"], errors='coerce').fillna(0)
+                df_inv["단가"] = pd.to_numeric(df_inv["단가"], errors='coerce').fillna(0)
+                total_value = (df_inv["수량"] * df_inv["단가"]).sum()
+                st.metric(label="총 자산 가치액", value=f"{total_value:,.0f} 원")
 
-if st.session_state['is_admin']:
-    st.sidebar.success("🔓 관리자 모드 가동 중")
-else:
-    st.sidebar.info("👁️ 조회 전용 모드")
+    # --- 서브탭 2: 재고 입/출고 관리 (관리자 권한 필수) ---
+    with sub_tab2:
+        st.subheader("🔄 재고 수량 변경")
+        if not is_admin:
+            st.warning("🔒 수정 권한이 없습니다. 사이드바에 올바른 관리자 비밀번호를 입력해 주세요.")
+        elif df_inv.empty:
+            st.info("등록된 품목이 없습니다. 신규 품목을 먼저 등록해 주세요.")
+        else:
+            item_list = df_inv["품목명"].tolist()
+            selected_item = st.selectbox("수정할 품목을 선택하세요", item_list)
+            
+            item_row = df_inv[df_inv["품목명"] == selected_item].iloc[0]
+            st.info(f"현재 보유 수량: {item_row['수량']}개 | 품목 단가: {int(item_row['단가']):,}원")
+            
+            with st.form("inv_update_form"):
+                action = st.radio("작업 선택", ["입고 (+)", "출고 (-)"])
+                quantity_change = st.number_input("수량 입력", min_value=1, step=1, value=1)
+                reason = st.text_input("조정 사유", value="정기 수량 조정")
+                
+                submit_btn = st.form_submit_button("시트 데이터 반영")
+                
+                if submit_btn:
+                    idx = df_inv[df_inv["품목명"] == selected_item].index[0]
+                    current_qty = int(df_inv.at[idx, "수량"])
+                    
+                    if action == "입고 (+)":
+                        new_qty = current_qty + quantity_change
+                        df_inv.at[idx, "수량"] = new_qty
+                        log_msg = f"기존 {current_qty}개 -> {new_qty}개 (사유: {reason})"
+                        st.success(f"{selected_item} {quantity_change}개 입고 처리되었습니다.")
+                    elif action == "출고 (-)":
+                        if current_qty < quantity_change:
+                            st.error("재고가 부족하여 출고할 수 없습니다.")
+                            st.stop()
+                        new_qty = current_qty - quantity_change
+                        df_inv.at[idx, "수량"] = new_qty
+                        log_msg = f"기존 {current_qty}개 -> {new_qty}개 (사유: {reason})"
+                        st.success(f"{selected_item} {quantity_change}개 출고 처리되었습니다.")
+                    
+                    # 구글 시트 저장
+                    conn.update(worksheet="inventory", data=df_inv)
+                    
+                    # 로그 생성 및 저장
+                    new_log = pd.DataFrame([{
+                        "일시": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "작업구분": action,
+                        "품목명": selected_item,
+                        "내용": log_msg,
+                        "작업자": "관리자"
+                    }])
+                    df_logs = pd.concat([df_logs, new_log], ignore_index=True)
+                    conn.update(worksheet="logs", data=df_logs)
+                    st.cache_data.clear()
+                    st.rerun()
 
-st.sidebar.divider()
+    # --- 서브탭 3: 신규 품목 등록 (관리자 권한 필수) ---
+    with sub_tab3:
+        st.subheader("➕ 신규 품목 데이터 베이스 추가")
+        if not is_admin:
+            st.warning("🔒 수정 권한이 없습니다. 사이드바에 올바른 관리자 비밀번호를 입력해 주세요.")
+        else:
+            with st.form("inv_insert_form", clear_on_submit=True):
+                code = st.text_input("품목코드 (중복 불가)")
+                name = st.text_input("품목명")
+                qty = st.number_input("초기 수량", min_value=0, step=1, value=0)
+                price = st.number_input("단가", min_value=0, step=100, value=0)
+                remark = st.text_input("비고 항목")
+                
+                add_btn = st.form_submit_button("신규 등록")
+                
+                if add_btn:
+                    if not code or not name:
+                        st.error("품목코드와 품목명은 필수 항목입니다.")
+                    elif str(code) in df_inv["품목코드"].astype(str).values:
+                        st.error("이미 등록된 품목코드입니다.")
+                    else:
+                        new_row = pd.DataFrame([{"품목코드": code, "품목명": name, "수량": qty, "단가": price, "비고": remark}])
+                        df_inv = pd.concat([df_inv, new_row], ignore_index=True)
+                        conn.update(worksheet="inventory", data=df_inv)
+                        
+                        # 등록 로그 기록
+                        new_log = pd.DataFrame([{
+                            "일시": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "작업구분": "품목등록",
+                            "품목명": name,
+                            "내용": f"신규 마스터 데이터 등록 (초기수량: {qty}개)",
+                            "작업자": "관리자"
+                        }])
+                        df_logs = pd.concat([df_logs, new_log], ignore_index=True)
+                        conn.update(worksheet="logs", data=df_logs)
+                        st.cache_data.clear()
+                        st.success(f"새로운 품목 [{name}]이 등록되었습니다.")
+                        st.rerun()
 
-# 최신 Streamlit 방식을 이용한 네비게이션 선언 및 실행
-page_schedule = st.Page(show_schedule_page, title="📅 근무 일정 조회/수정", icon="📆")
-page_manage = st.Page(show_management_page, title="👤 근무자 및 정보 관리", icon="⚙️")
-
-# 라우팅 맵 선언
-pg = st.navigation([page_schedule, page_manage])
-pg.run()
+    # --- 서브탭 4: 수정 내역 로그 확인 (비밀번호 불필요) ---
+    with sub_tab4:
+        st.subheader("📜 재고 수불 및 변경 이력 로그")
+        if not df_logs.empty:
+            # 최신 로그가 맨 상단에 나오도록 정렬 후 출력
+            st.dataframe(df_logs.iloc[::-1], use_container_width=True, hide_index=True)
+        else:
+            st.info("기록된 변경 이력이 없습니다.")
