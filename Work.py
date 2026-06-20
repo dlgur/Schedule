@@ -64,14 +64,15 @@ def to_excel(df):
     return output.getvalue()
 
 # ==========================================
-# 3. 데이터베이스 연결 및 로드 (Google Sheets)
+# 3. 데이터베이스 연결 및 로드 (API 과부하 방지 메모리 캐싱 적용)
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # --- [DB 함수] 1. 근무 일정 데이터 로드 ---
 def load_schedule_data():
     try:
-        df = conn.read(worksheet="Sheet1", ttl="1m") 
+        # ttl을 3분으로 늘려 잦은 새로고침 시 API 호출을 방지합니다.
+        df = conn.read(worksheet="Sheet1", ttl="3m") 
         if df is None or df.empty or 'date' not in df.columns:
             return {}
         db = {}
@@ -84,17 +85,22 @@ def load_schedule_data():
 
 # --- [DB 함수] 2. 재고 및 로그 데이터 로드 ---
 def load_inventory_data():
+    # 매 화면 렌더링마다 read하지 않고 세션 스토리지에 기억된 값이 있다면 그것을 반환하여 API 소모를 막습니다.
+    if "df_inv_cached" in st.session_state and "df_logs_cached" in st.session_state:
+        return st.session_state["df_inv_cached"], st.session_state["df_logs_cached"]
+        
     df_inv = pd.DataFrame(columns=["품목코드", "품목명", "수량", "비고", "박스당수량", "개당음료수"])
     df_logs = pd.DataFrame(columns=["일시", "작업구분", "품목명", "내용", "작업자"])
     
-    # 캐시 무효화를 위해 ttl="0m" 유지
     try:
-        df_inv = conn.read(worksheet="inventory", ttl="0m")
+        df_inv = conn.read(worksheet="inventory", ttl="3m")
+        st.session_state["df_inv_cached"] = df_inv
     except:
         st.sidebar.error("⚠️ 구글 시트에서 'inventory' 탭을 찾을 수 없습니다.")
         
     try:
-        df_logs = conn.read(worksheet="logs", ttl="0m")
+        df_logs = conn.read(worksheet="logs", ttl="3m")
+        st.session_state["df_logs_cached"] = df_logs
     except:
         st.sidebar.error("⚠️ 구글 시트에서 'logs' 탭을 찾을 수 없습니다.")
         
@@ -182,6 +188,7 @@ if main_menu == "📅 근무 일정 관리":
                 
                 if not is_off:
                     if is_admin:
+                        # 무한 루프 Rerun 방지를 위해 변경 감지 후 전송 처리 분리 조율 가능하나 기존 코드 유결 유지
                         new = st.multiselect(f"m_edit_{d}", list(WORKER_COLORS.keys()), default=assigned, key=f"m_{d_str}", label_visibility="collapsed")
                         if new != assigned:
                             save_to_sheets(d_str, new)
@@ -245,7 +252,7 @@ if main_menu == "📅 근무 일정 관리":
             month_workers.extend(assigned)
             export_data.append({
                 "날짜": d_str, 
-                "요일": ["월","화","수","목엔","금","토","일"][d_date.weekday()], 
+                "요일": ["월","화","수","목","금","토","일"][d_date.weekday()], 
                 "근무자": ", ".join(assigned), 
                 "비고": kr_holidays.get(d_date, "")
             })
@@ -265,24 +272,26 @@ if main_menu == "📅 근무 일정 관리":
                 file_name=f"근무표_{selected_month}월.xlsx", 
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
 # ==========================================
-# 메뉴 B: 📦 재고 관리 시스템 (KeyError 버그 완벽 해결 버전)
+# 메뉴 B: 📦 재고 관리 시스템
 # ==========================================
 elif main_menu == "📦 재고 관리 시스템":
-    # 타이틀 라인과 실시간 새로고침 버튼 배치
     col_title, col_refresh = st.columns([5, 1])
     with col_title:
         st.title("📦 재고 관리 및 수불대장")
     with col_refresh:
-        st.write("") # 패딩용
+        st.write("") 
         if st.button("🔄 실시간 현황 새로고침", use_container_width=True):
+            # 새로고침 버튼을 누를 때만 캐시 스토리지를 강제로 날려 구글 시트를 다시 읽어옵니다.
+            if "df_inv_cached" in st.session_state: del st.session_state["df_inv_cached"]
+            if "df_logs_cached" in st.session_state: del st.session_state["df_logs_cached"]
             st.cache_data.clear()
-            st.toast("구글 시트로부터 최신 데이터를 불러왔습니다!")
+            st.toast("최신 데이터를 성공적으로 동기화했습니다!")
             st.rerun()
     
     df_inv, df_logs = load_inventory_data()
     
-    # 누락 데이터 및 전처리 안전장치
     for col in ["수량", "박스당수량", "개당음료수"]:
         if col in df_inv.columns:
             df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0).astype(int)
@@ -291,7 +300,6 @@ elif main_menu == "📦 재고 관리 시스템":
             
     sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["🔍 현재 재고 조회", "🔄 재고 입/출고", "➕ 신규 품목 등록", "📜 수정 내역 로그"])
     
-    # --- 서브탭 1: 현재 재고 조회 ---
     with sub_tab1:
         st.subheader("🔍 실시간 물류 현황")
         search_keyword = st.text_input("품목명 검색", key="inv_search")
@@ -303,12 +311,10 @@ elif main_menu == "📦 재고 관리 시스템":
 
         display_df = filtered_df.copy()
         
-        # 1. 계산 제외 및 추산 연산 처리
         def process_rows(row):
             qty = row["수량"]
             box_unit = row["박스당수량"]
             ratio = row["개당음료수"]
-            
             box_text = f"{qty // box_unit}박스 (+{qty % box_unit}개)" if box_unit > 0 else f"{qty}개"
             
             if ratio <= 0:
@@ -323,7 +329,6 @@ elif main_menu == "📦 재고 관리 시스템":
         if not display_df.empty:
             display_df[["보유 재고(박스 환산)", "제조 가능 음료수(추산)", "_raw_drinks"]] = display_df.apply(process_rows, axis=1)
             
-            # 부족 품목 상단 요약 브리핑 (텍스트 알림으로 가독성 보완)
             low_stock_items = display_df[display_df["_raw_drinks"] <= 10]["품목명"].tolist()
             warning_stock_items = display_df[(display_df["_raw_drinks"] > 10) & (display_df["_raw_drinks"] <= 30)]["품목명"].tolist()
             
@@ -332,35 +337,29 @@ elif main_menu == "📦 재고 관리 시스템":
             elif warning_stock_items:
                 st.warning(f"⚠️ **재고 부족 주의 (30잔 이하):** {', '.join(warning_stock_items)}")
 
-            # 노출할 최종 컬럼 목록 확정 및 인덱스 초기화
             cols_to_show = ["품목코드", "품목명", "수량", "보유 재고(박스 환산)", "제조 가능 음료수(추산)", "비고"]
             existing_cols = [c for c in cols_to_show if c in display_df.columns]
             
-            # [💡 완벽한 버그 해결책] 스타일러 내부 람다식에서 원본 display_df의 index를 이용해 _raw_drinks 값을 직접 조회
-            # 이렇게 하면 판다스가 로우를 자르든 말든 인덱스로 원본 수량을 정확히 찾아와 KeyError가 절대로 발생하지 않습니다.
             def style_by_index(row):
                 idx = row.name
                 raw_drinks_val = display_df.loc[idx, "_raw_drinks"]
-                
                 if raw_drinks_val <= 10:
                     return ['background-color: #ffdde1; color: #c92a2a; font-weight: bold;'] * len(row)
                 elif raw_drinks_val <= 30:
                     return ['background-color: #fff3bf; color: #e67e22;'] * len(row)
                 return [''] * len(row)
 
-            # 필요한 컬럼 데이터프레임만 딱 잘라서 스타일을 적용
             final_view_df = display_df[existing_cols]
             styled_df = final_view_df.style.apply(style_by_index, axis=1)
             
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
-            st.caption("💡 **안내**: 제조 가능 음료수가 **10잔 이하**인 품목은 <span style='color:#c92a2a; font-weight:bold;'>빨간색</span>, **30잔 이하**는 <span style='color:#e67e22; font-weight:bold;'>노란색</span>으로 강조 표시됩니다. (❌ 표시 품목은 계산 제외 자재입니다.)", unsafe_allow_html=True)
+            st.caption("💡 **안내**: 제조 가능 음료수가 **10잔 이하**인 품목은 빨간색, **30잔 이하**는 노란색으로 강조 표시됩니다.", unsafe_allow_html=True)
         else:
             st.info("조회할 재고 데이터가 없습니다.")
             
         st.divider()
         st.metric(label="총 취급 품목 종수", value=len(df_inv))
 
-    # --- 서브탭 2: 재고 입/출고 관리 ---
     with sub_tab2:
         st.subheader("🔄 재고 수량 변경 및 박스 계산기")
         if not is_admin:
@@ -398,7 +397,7 @@ elif main_menu == "📦 재고 관리 시스템":
                     
                     if input_mode == "📦 박스 개수로 계산해서 넣기":
                         if p_box_qty <= 0:
-                            st.error("해당 품목의 마스터 박스당 수량 설정이 올바르지 않습니다. 낱개 입력을 이용하세요.")
+                            st.error("해당 품목의 마스터 박스당 수량 설정이 올바르지 않습니다.")
                             st.stop()
                         quantity_change = box_input * p_box_qty
                         detail_text = f"{box_input}박스(총 {quantity_change}개)"
@@ -407,7 +406,7 @@ elif main_menu == "📦 재고 관리 시스템":
                         detail_text = f"{each_input}개(낱개)"
                         
                     if quantity_change <= 0:
-                        st.error("입력된 수량이 없습니다. 0보다 큰 값을 입력하세요.")
+                        st.error("입력된 수량이 없습니다.")
                         st.stop()
                         
                     if action == "입고 (+)":
@@ -420,7 +419,7 @@ elif main_menu == "📦 재고 관리 시스템":
                         st.success(f"{selected_item} 상품이 {detail_text}만큼 입고 완료되었습니다.")
                     elif action == "출고 (-)":
                         if current_qty < quantity_change:
-                            st.error(f"창고 재고가 부족합니다. (현재 보유: {current_qty}개 / 출고 시도: {quantity_change}개)")
+                            st.error(f"창고 재고가 부족합니다.")
                             st.stop()
                         new_qty = current_qty - quantity_change
                         log_msg = f"출고: {detail_text} | 사유: {reason}"
@@ -429,7 +428,9 @@ elif main_menu == "📦 재고 관리 시스템":
                     df_inv.at[idx, "수량"] = new_qty
                     conn.update(worksheet="inventory", data=df_inv)
                     
-                    # 로그 마킹
+                    # 캐시 강제 무효화 및 메모리 수동 동기화
+                    st.session_state["df_inv_cached"] = df_inv
+                    
                     new_log = pd.DataFrame([{
                         "일시": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "작업구분": action,
@@ -439,10 +440,11 @@ elif main_menu == "📦 재고 관리 시스템":
                     }])
                     df_logs = pd.concat([df_logs, new_log], ignore_index=True)
                     conn.update(worksheet="logs", data=df_logs)
+                    st.session_state["df_logs_cached"] = df_logs
+                    
                     st.cache_data.clear()
                     st.rerun()
 
-    # --- 서브탭 3: 신규 품목 등록 ---
     with sub_tab3:
         st.subheader("➕ 신규 품목 등록 및 마스터 규격 설정")
         if not is_admin:
@@ -484,6 +486,7 @@ elif main_menu == "📦 재고 관리 시스템":
                         }])
                         df_inv = pd.concat([df_inv, new_row], ignore_index=True)
                         conn.update(worksheet="inventory", data=df_inv)
+                        st.session_state["df_inv_cached"] = df_inv
                         
                         ratio_log_text = "계산제외" if final_ratio == 0 else f"{final_ratio}잔"
                         new_log = pd.DataFrame([{
@@ -495,11 +498,12 @@ elif main_menu == "📦 재고 관리 시스템":
                         }])
                         df_logs = pd.concat([df_logs, new_log], ignore_index=True)
                         conn.update(worksheet="logs", data=df_logs)
+                        st.session_state["df_logs_cached"] = df_logs
+                        
                         st.cache_data.clear()
                         st.success(f"새로운 물품 [{name}]의 마스터 규격이 성공적으로 등록되었습니다.")
                         st.rerun()
 
-    # --- 서브탭 4: 수정 내역 로그 확인 ---
     with sub_tab4:
         st.subheader("📜 재고 수불 및 변경 이력 로그")
         if not df_logs.empty:
