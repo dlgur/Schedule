@@ -87,6 +87,7 @@ def load_inventory_data():
     df_inv = pd.DataFrame(columns=["품목코드", "품목명", "수량", "비고", "박스당수량", "개당음료수"])
     df_logs = pd.DataFrame(columns=["일시", "작업구분", "품목명", "내용", "작업자"])
     
+    # 캐시 무효화를 위해 ttl="0m" 유지
     try:
         df_inv = conn.read(worksheet="inventory", ttl="0m")
     except:
@@ -244,7 +245,7 @@ if main_menu == "📅 근무 일정 관리":
             month_workers.extend(assigned)
             export_data.append({
                 "날짜": d_str, 
-                "요일": ["월","화","수","목","금","토","일"][d_date.weekday()], 
+                "요일": ["월","화","수","목엔","금","토","일"][d_date.weekday()], 
                 "근무자": ", ".join(assigned), 
                 "비고": kr_holidays.get(d_date, "")
             })
@@ -266,14 +267,23 @@ if main_menu == "📅 근무 일정 관리":
             )
 
 # ==========================================
-# 메뉴 B: 📦 재고 관리 시스템 (단가 제외 물류 버전)
+# 메뉴 B: 📦 재고 관리 시스템
 # ==========================================
 elif main_menu == "📦 재고 관리 시스템":
-    st.title("📦 재고 관리 및 수불대장")
+    # 타이틀 라인과 실시간 새로고침 버튼 배치
+    col_title, col_refresh = st.columns([5, 1])
+    with col_title:
+        st.title("📦 재고 관리 및 수불대장")
+    with col_refresh:
+        st.write("") # 패딩용
+        if st.button("🔄 실시간 현황 새로고침", use_container_width=True):
+            st.cache_data.clear()
+            st.toast("구글 시트로부터 최신 데이터를 불러왔습니다!")
+            st.rerun()
     
     df_inv, df_logs = load_inventory_data()
     
-    # 누락 및 문자열 데이터 강제 변환 (에러 유발 소지 사전 차단)
+    # 누락 데이터 및 전처리 안전장치
     for col in ["수량", "박스당수량", "개당음료수"]:
         if col in df_inv.columns:
             df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0).astype(int)
@@ -282,7 +292,7 @@ elif main_menu == "📦 재고 관리 시스템":
             
     sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["🔍 현재 재고 조회", "🔄 재고 입/출고", "➕ 신규 품목 등록", "📜 수정 내역 로그"])
     
-    # --- 서브탭 1: 현재 재고 조회 ---
+    # --- 서브탭 1: 현재 재고 조회 (강조 및 계산 제외 기능 탑재) ---
     with sub_tab1:
         st.subheader("🔍 실시간 물류 현황")
         search_keyword = st.text_input("품목명 검색", key="inv_search")
@@ -293,23 +303,53 @@ elif main_menu == "📦 재고 관리 시스템":
             filtered_df = df_inv
 
         display_df = filtered_df.copy()
-        try:
-            # 박스 환산 나머지 연산 및 음료수 추산값 생성
-            display_df["보유 재고(박스 환산)"] = display_df.apply(
-                lambda r: f"{r['수량'] // r['박스당수량']}박스 (+{r['수량'] % r['박스당수량']}개)" if r['box_qty_safe' if 'box_qty_safe' in r else '박스당수량'] > 0 else f"{r['수량']}개", axis=1
-            )
-            display_df["제조 가능 음료수(추산)"] = (display_df["수량"] * display_df["개당음료수"]).map('{:,} 잔'.format)
-        except:
-            pass
-
-        cols_to_show = ["품목코드", "품목명", "수량", "보유 재고(박스 환산)", "제조 가능 음료수(추산)", "비고"]
-        existing_cols = [c for c in cols_to_show if c in display_df.columns]
-        st.dataframe(display_df[existing_cols], use_container_width=True, hide_index=True)
         
+        # 1. 계산 제외 및 추산 연산 처리
+        def process_rows(row):
+            qty = row["수량"]
+            box_unit = row["박스당수량"]
+            ratio = row["개당음료수"]
+            
+            # 보유 재고 박스 환산문구
+            box_text = f"{qty // box_unit}박스 (+{qty % box_unit}개)" if box_unit > 0 else f"{qty}개"
+            
+            # 음료수 계산 분기 (0이면 계산 불가/제외 품목)
+            if ratio <= 0:
+                drink_text = "❌ [계산 제외품]"
+                raw_drinks = 999999 # 제외품은 경고 대상에서 제외하기 위함
+            else:
+                raw_drinks = qty * ratio
+                drink_text = f"{raw_drinks:,} 잔"
+                
+            return pd.Series([box_text, drink_text, raw_drinks])
+
+        if not display_df.empty:
+            display_df[["보유 재고(박스 환산)", "제조 가능 음료수(추산)", "_raw_drinks"]] = display_df.apply(process_rows, axis=1)
+            
+            # 2. 10잔 이하 강조 기능 스타일링 규칙 정의
+            def highlight_low_stock(row):
+                # 계산 제외품이 아니고, 추정 잔수가 10잔 이하인 경우 색상 마킹
+                if row["_raw_drinks"] <= 10:
+                    return ['background-color: #ffdde1; color: #c92a2a; font-weight: bold;'] * len(row)
+                elif row["_raw_drinks"] <= 30: # (옵션) 30잔 이하는 노란색 주의 경고
+                    return ['background-color: #fff3bf; color: #e67e22;'] * len(row)
+                return [''] * len(row)
+
+            cols_to_show = ["품목코드", "품목명", "수량", "보유 재고(박스 환산)", "제조 가능 음료수(추산)", "비고"]
+            existing_cols = [c for c in cols_to_show if c in display_df.columns]
+            
+            # 판다스 스타일러 적용하여 가독성 증대
+            styled_df = display_df[existing_cols].style.apply(highlight_low_stock, axis=1)
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+            
+            st.caption("💡 **안내**: 제조 가능 음료수가 **10잔 이하**인 품목은 <span style='color:#c92a2a; font-weight:bold;'>빨간색</span>, **30잔 이하**는 <span style='color:#e67e22; font-weight:bold;'>노란색</span>으로 강조 표시됩니다. (❌ 표시 품목은 계산 제외 자재입니다.)", unsafe_allow_html=True)
+        else:
+            st.info("조회할 재고 데이터가 없습니다.")
+            
         st.divider()
         st.metric(label="총 취급 품목 종수", value=len(df_inv))
 
-    # --- 서브탭 2: 재고 입/출고 관리 (안전성 보완 및 계산기 일체화) ---
+    # --- 서브탭 2: 재고 입/출고 관리 ---
     with sub_tab2:
         st.subheader("🔄 재고 수량 변경 및 박스 계산기")
         if not is_admin:
@@ -322,12 +362,12 @@ elif main_menu == "📦 재고 관리 시스템":
             
             item_row = df_inv[df_inv["품목명"] == selected_item].iloc[0]
             
-            # 안전하게 데이터 파싱 (int 에러 원천 차단)
             p_box_qty = int(item_row["박스당수량"]) if pd.notna(item_row["박스당수량"]) else 1
             p_drink_ratio = int(item_row["개당음료수"]) if pd.notna(item_row["개당음료수"]) else 0
             current_qty = int(item_row["수량"]) if pd.notna(item_row["수량"]) else 0
             
-            st.info(f"💡 현재 보유 낱개: {current_qty}개 | [📦 1박스 = {p_box_qty}개입] | [🥤 1개당 음료 {p_drink_ratio}잔 제조 가능]")
+            ratio_info = f"{p_drink_ratio}잔 제조 가능" if p_drink_ratio > 0 else "❌ 계산 제외 품목"
+            st.info(f"💡 현재 보유 낱개: {current_qty}개 | [📦 1박스 = {p_box_qty}개입] | [🥤 기준: {ratio_info}]")
             
             with st.form("inv_update_form"):
                 action = st.radio("작업 선택", ["입고 (+)", "출고 (-)"])
@@ -347,7 +387,7 @@ elif main_menu == "📦 재고 관리 시스템":
                     
                     if input_mode == "📦 박스 개수로 계산해서 넣기":
                         if p_box_qty <= 0:
-                            st.error("해당 품목의 마스터 박스당 수량 설정이 올바르지 않습니다(0 이하). 낱개 입력 방식을 이용하세요.")
+                            st.error("해당 품목의 마스터 박스당 수량 설정이 올바르지 않습니다. 낱개 입력을 이용하세요.")
                             st.stop()
                         quantity_change = box_input * p_box_qty
                         detail_text = f"{box_input}박스(총 {quantity_change}개)"
@@ -361,8 +401,11 @@ elif main_menu == "📦 재고 관리 시스템":
                         
                     if action == "입고 (+)":
                         new_qty = current_qty + quantity_change
-                        calc_drinks = quantity_change * p_drink_ratio
-                        log_msg = f"입고: {detail_text} | 추가 음료 생산량: +{calc_drinks}잔 추산 | 사유: {reason}"
+                        if p_drink_ratio > 0:
+                            calc_drinks = quantity_change * p_drink_ratio
+                            log_msg = f"입고: {detail_text} | 추가 음료 생산량: +{calc_drinks}잔 추산 | 사유: {reason}"
+                        else:
+                            log_msg = f"입고: {detail_text} | [계산제외품목] | 사유: {reason}"
                         st.success(f"{selected_item} 상품이 {detail_text}만큼 입고 완료되었습니다.")
                     elif action == "출고 (-)":
                         if current_qty < quantity_change:
@@ -375,7 +418,7 @@ elif main_menu == "📦 재고 관리 시스템":
                     df_inv.at[idx, "수량"] = new_qty
                     conn.update(worksheet="inventory", data=df_inv)
                     
-                    # 로그 생성
+                    # 로그 마킹
                     new_log = pd.DataFrame([{
                         "일시": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "작업구분": action,
@@ -388,14 +431,14 @@ elif main_menu == "📦 재고 관리 시스템":
                     st.cache_data.clear()
                     st.rerun()
 
-    # --- 서브탭 3: 신규 품목 등록 ---
+    # --- 서브탭 3: 신규 품목 등록 (계산 불가 품목 트리거 포함) ---
     with sub_tab3:
         st.subheader("➕ 신규 품목 등록 및 마스터 규격 설정")
         if not is_admin:
             st.warning("🔒 수정 권한이 없습니다. 사이드바에 올바른 관리자 비밀번호를 입력해 주세요.")
         else:
             with st.form("inv_insert_form", clear_on_submit=True):
-                code = st.text_input("품목코드 (중복 불가)")
+                code = st.text_input("품목코드 (난독화 SKU 패턴 권장)")
                 name = st.text_input("품목명")
                 
                 st.markdown("#### 📐 수량 및 음료수 추산 기준 정의")
@@ -403,7 +446,9 @@ elif main_menu == "📦 재고 관리 시스템":
                 with col_m1:
                     box_qty = st.number_input("📦 1박스당 들어있는 기본 낱개 개수", min_value=1, step=1, value=1)
                 with col_m2:
-                    drink_ratio = st.number_input("🥤 낱개 1개당 제조 가능한 음료 잔수", min_value=0, step=1, value=1)
+                    # 유저의 선택폭 유연화
+                    is_calc_disabled = st.checkbox("컵, 빨대, 얼음 등 음료수 계산 제외 품목 설정")
+                    drink_ratio = st.number_input("🥤 낱개 1개당 제조 가능한 음료 잔수 (위 체크 시 무시됨)", min_value=0, step=1, value=1)
                 
                 st.divider()
                 qty = st.number_input("초기 보유 수량 (낱개 기준)", min_value=0, step=1, value=0)
@@ -412,6 +457,8 @@ elif main_menu == "📦 재고 관리 시스템":
                 add_btn = st.form_submit_button("신규 마스터 등록")
                 
                 if add_btn:
+                    final_ratio = 0 if is_calc_disabled else int(drink_ratio)
+                    
                     if not code or not name:
                         st.error("품목코드와 품목명은 누락될 수 없습니다.")
                     elif str(code) in df_inv["품목코드"].astype(str).values:
@@ -423,23 +470,23 @@ elif main_menu == "📦 재고 관리 시스템":
                             "수량": int(qty), 
                             "비고": remark,
                             "박스당수량": int(box_qty),
-                            "개당음료수": int(drink_ratio)
+                            "개당음료수": final_ratio
                         }])
                         df_inv = pd.concat([df_inv, new_row], ignore_index=True)
                         conn.update(worksheet="inventory", data=df_inv)
                         
-                        # 히스토리 로그 기록
+                        ratio_log_text = "계산제외" if final_ratio == 0 else f"{final_ratio}잔"
                         new_log = pd.DataFrame([{
                             "일시": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "작업구분": "품목등록",
                             "품목명": name,
-                            "내용": f"마스터 추가 -> 규격 [1박스={box_qty}개입 / 1개당={drink_ratio}잔] (초기보유: {qty}개)",
+                            "내용": f"마스터 추가 -> 규격 [1박스={box_qty}개입 / 기준={ratio_log_text}] (초기보유: {qty}개)",
                             "작업자": "관리자"
                         }])
                         df_logs = pd.concat([df_logs, new_log], ignore_index=True)
                         conn.update(worksheet="logs", data=df_logs)
                         st.cache_data.clear()
-                        st.success(f"새로운 물품 [{name}]의 마스터 규격이 등록되었습니다.")
+                        st.success(f"새로운 물품 [{name}]의 마스터 규격이 성공적으로 등록되었습니다.")
                         st.rerun()
 
     # --- 서브탭 4: 수정 내역 로그 확인 ---
