@@ -8,7 +8,7 @@ from io import BytesIO
 # ==========================================
 # 1. 페이지 설정 및 공통 CSS 디자인
 # ==========================================
-st.set_page_config(page_title="통합 매니지먼트 시스템", layout="wide")
+st.set_page_config(page_title="통합 물류 관리 시스템", layout="wide")
 
 st.markdown("""
     <style>
@@ -84,7 +84,7 @@ def load_schedule_data():
 
 # --- [DB 함수] 2. 재고 및 로그 데이터 로드 ---
 def load_inventory_data():
-    df_inv = pd.DataFrame(columns=["품목코드", "품목명", "수량", "단가", "비고", "박스당수량", "개당음료수"])
+    df_inv = pd.DataFrame(columns=["품목코드", "품목명", "수량", "비고", "박스당수량", "개당음료수"])
     df_logs = pd.DataFrame(columns=["일시", "작업구분", "품목명", "내용", "작업자"])
     
     try:
@@ -116,7 +116,6 @@ current_year = 2026
 # ==========================================
 st.sidebar.title("⚙️ 통합 관리 시스템")
 
-# 비밀번호 통합 검증 (재고 관리, 근무 수정 공용)
 password = st.sidebar.text_input("관리자 비밀번호", type="password")
 is_admin = (password == "1234") 
 
@@ -267,23 +266,25 @@ if main_menu == "📅 근무 일정 관리":
             )
 
 # ==========================================
-# 메뉴 B: 📦 재고 관리 시스템
+# 메뉴 B: 📦 재고 관리 시스템 (단가 제외 물류 버전)
 # ==========================================
 elif main_menu == "📦 재고 관리 시스템":
     st.title("📦 재고 관리 및 수불대장")
     
     df_inv, df_logs = load_inventory_data()
     
-    # 누락 데이터 컬럼 보정 안전장치
-    for col in ["박스당수량", "개당음료수"]:
-        if col not in df_inv.columns:
+    # 누락 및 문자열 데이터 강제 변환 (에러 유발 소지 사전 차단)
+    for col in ["수량", "박스당수량", "개당음료수"]:
+        if col in df_inv.columns:
+            df_inv[col] = pd.to_numeric(df_inv[col], errors='coerce').fillna(0).astype(int)
+        else:
             df_inv[col] = 0
             
     sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(["🔍 현재 재고 조회", "🔄 재고 입/출고", "➕ 신규 품목 등록", "📜 수정 내역 로그"])
     
     # --- 서브탭 1: 현재 재고 조회 ---
     with sub_tab1:
-        st.subheader("🔍 실시간 재고 현황")
+        st.subheader("🔍 실시간 물류 현황")
         search_keyword = st.text_input("품목명 검색", key="inv_search")
         
         if search_keyword:
@@ -293,37 +294,22 @@ elif main_menu == "📦 재고 관리 시스템":
 
         display_df = filtered_df.copy()
         try:
-            display_df["수량"] = pd.to_numeric(display_df["수량"]).fillna(0).astype(int)
-            display_df["박스당수량"] = pd.to_numeric(display_df["박스당수량"]).fillna(0).astype(int)
-            display_df["개당음료수"] = pd.to_numeric(display_df["개당음료수"]).fillna(0).astype(int)
-            
-            # 낱개 기반 박스 개수 역산 (나머지 낱개 포함 직관적 표시)
+            # 박스 환산 나머지 연산 및 음료수 추산값 생성
             display_df["보유 재고(박스 환산)"] = display_df.apply(
-                lambda r: f"{r['수량'] // r['박스당수량']}박스 (+{r['수량'] % r['박스당수량']}개)" if r['박스당수량'] > 0 else f"{r['수량']}개", axis=1
+                lambda r: f"{r['수량'] // r['박스당수량']}박스 (+{r['수량'] % r['박스당수량']}개)" if r['box_qty_safe' if 'box_qty_safe' in r else '박스당수량'] > 0 else f"{r['수량']}개", axis=1
             )
-            # 낱개 기반 총 가능 음료 잔수 추산
-            display_df["제조 가능 음료수(추산)"] = display_df["수량"] * display_df["개당음료수"]
-            display_df["제조 가능 음료수(추산)"] = display_df["제조 가능 음료수(추산)"].map('{:,} 잔'.format)
+            display_df["제조 가능 음료수(추산)"] = (display_df["수량"] * display_df["개당음료수"]).map('{:,} 잔'.format)
         except:
             pass
 
-        # 깔끔하게 정리된 뷰 출력
-        cols_to_show = ["품목코드", "품목명", "수량", "보유 재고(박스 환산)", "단가", "제조 가능 음료수(추산)", "비고"]
+        cols_to_show = ["품목코드", "품목명", "수량", "보유 재고(박스 환산)", "제조 가능 음료수(추산)", "비고"]
         existing_cols = [c for c in cols_to_show if c in display_df.columns]
         st.dataframe(display_df[existing_cols], use_container_width=True, hide_index=True)
         
         st.divider()
-        col1, col2 = st.columns(2)
-        with col1:
-            st.metric(label="총 품목 종수", value=len(df_inv))
-        with col2:
-            if not df_inv.empty:
-                df_inv["수량"] = pd.to_numeric(df_inv["수량"], errors='coerce').fillna(0)
-                df_inv["단가"] = pd.to_numeric(df_inv["단가"], errors='coerce').fillna(0)
-                total_value = (df_inv["수량"] * df_inv["단가"]).sum()
-                st.metric(label="총 자산 가치액", value=f"{total_value:,.0f} 원")
+        st.metric(label="총 취급 품목 종수", value=len(df_inv))
 
-    # --- 서브탭 2: 재고 입/출고 관리 (실시간 박스 연산기 탑재) ---
+    # --- 서브탭 2: 재고 입/출고 관리 (안전성 보완 및 계산기 일체화) ---
     with sub_tab2:
         st.subheader("🔄 재고 수량 변경 및 박스 계산기")
         if not is_admin:
@@ -335,10 +321,13 @@ elif main_menu == "📦 재고 관리 시스템":
             selected_item = st.selectbox("수정할 품목을 선택하세요", item_list)
             
             item_row = df_inv[df_inv["품목명"] == selected_item].iloc[0]
-            p_box_qty = int(item_row.get("박스당수량", 0))
-            p_drink_ratio = int(item_row.get("개당음료수", 0))
             
-            st.info(f"💡 현재 보유 낱개: {item_row['수량']}개 | [📦 1박스 = {p_box_qty}개입] | [🥤 1개당 음료 {p_drink_ratio}잔 제조 가능]")
+            # 안전하게 데이터 파싱 (int 에러 원천 차단)
+            p_box_qty = int(item_row["박스당수량"]) if pd.notna(item_row["박스당수량"]) else 1
+            p_drink_ratio = int(item_row["개당음료수"]) if pd.notna(item_row["개당음료수"]) else 0
+            current_qty = int(item_row["수량"]) if pd.notna(item_row["수량"]) else 0
+            
+            st.info(f"💡 현재 보유 낱개: {current_qty}개 | [📦 1박스 = {p_box_qty}개입] | [🥤 1개당 음료 {p_drink_ratio}잔 제조 가능]")
             
             with st.form("inv_update_form"):
                 action = st.radio("작업 선택", ["입고 (+)", "출고 (-)"])
@@ -350,18 +339,15 @@ elif main_menu == "📦 재고 관리 시스템":
                 with col_calc2:
                     each_input = st.number_input("입력할 낱개 개수", min_value=0, step=1, value=0)
                 
-                # 실시간 유저 확인용 계산 미리보기식 텍스트 가안 도출
                 reason = st.text_input("조정 사유", value="정기 수량 조정")
                 submit_btn = st.form_submit_button("시트 데이터 반영")
                 
                 if submit_btn:
-                    current_qty = int(item_row["수량"])
                     idx = df_inv[df_inv["품목명"] == selected_item].index[0]
                     
-                    # 최종 수량 연산 규칙 파싱
                     if input_mode == "📦 박스 개수로 계산해서 넣기":
-                        if p_box_qty == 0:
-                            st.error("해당 품목의 마스터 박스당 수량이 0입니다. 낱개 입력 방식을 이용해 주세요.")
+                        if p_box_qty <= 0:
+                            st.error("해당 품목의 마스터 박스당 수량 설정이 올바르지 않습니다(0 이하). 낱개 입력 방식을 이용하세요.")
                             st.stop()
                         quantity_change = box_input * p_box_qty
                         detail_text = f"{box_input}박스(총 {quantity_change}개)"
@@ -386,11 +372,10 @@ elif main_menu == "📦 재고 관리 시스템":
                         log_msg = f"출고: {detail_text} | 사유: {reason}"
                         st.success(f"{selected_item} 상품이 {detail_text}만큼 출고 완료되었습니다.")
                     
-                    # 메모리 및 구글 시트 데이터 영구 업데이트
                     df_inv.at[idx, "수량"] = new_qty
                     conn.update(worksheet="inventory", data=df_inv)
                     
-                    # 로그 저장
+                    # 로그 생성
                     new_log = pd.DataFrame([{
                         "일시": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "작업구분": action,
@@ -422,7 +407,6 @@ elif main_menu == "📦 재고 관리 시스템":
                 
                 st.divider()
                 qty = st.number_input("초기 보유 수량 (낱개 기준)", min_value=0, step=1, value=0)
-                price = st.number_input("단가 (원)", min_value=0, step=100, value=0)
                 remark = st.text_input("비고 항목")
                 
                 add_btn = st.form_submit_button("신규 마스터 등록")
@@ -436,11 +420,10 @@ elif main_menu == "📦 재고 관리 시스템":
                         new_row = pd.DataFrame([{
                             "품목코드": code, 
                             "품목명": name, 
-                            "수량": qty, 
-                            "단가": price, 
+                            "수량": int(qty), 
                             "비고": remark,
-                            "박스당수량": box_qty,
-                            "개당음료수": drink_ratio
+                            "박스당수량": int(box_qty),
+                            "개당음료수": int(drink_ratio)
                         }])
                         df_inv = pd.concat([df_inv, new_row], ignore_index=True)
                         conn.update(worksheet="inventory", data=df_inv)
