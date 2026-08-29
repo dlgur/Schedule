@@ -13,7 +13,7 @@ st.set_page_config(page_title="통합 물류 관리 시스템", layout="wide")
 st.markdown("""
     <style>
     [data-testid="column"] {
-        height: 250px !important; 
+        height: 280px !important; 
         border: 1px solid #dee2e6;
         padding: 10px !important;
         background-color: #ffffff;
@@ -37,6 +37,17 @@ st.markdown("""
         margin: 2px;
         color: black;
         border: 1px solid rgba(0,0,0,0.1);
+    }
+    .anti-tag {
+        display: inline-block;
+        padding: 3px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: bold;
+        margin: 2px;
+        color: #c92a2a;
+        background-color: #ffe3e3;
+        border: 1px solid #ffa8a8;
     }
     .today-badge {
         background-color: #fcc419;
@@ -68,24 +79,33 @@ def to_excel(df):
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# --- [DB 함수] 1. 근무 일정 데이터 로드 ---
+# --- [DB 함수] 1. 근무 및 안티 일정 데이터 로드 ---
 def load_schedule_data():
+    db = {}
     try:
-        # ttl을 3분으로 늘려 잦은 새로고침 시 API 호출을 방지합니다.
         df = conn.read(worksheet="Sheet1", ttl="3m") 
-        if df is None or df.empty or 'date' not in df.columns:
-            return {}
-        db = {}
-        for _, row in df.iterrows():
-            if pd.notna(row['date']) and pd.notna(row['workers']):
-                db[str(row['date'])] = str(row['workers']).split(',')
-        return db
+        if df is not None and not df.empty and 'date' in df.columns:
+            for _, row in df.iterrows():
+                if pd.notna(row['date']) and pd.notna(row['workers']):
+                    db[str(row['date'])] = [w.strip() for w in str(row['workers']).split(',') if w.strip()]
     except:
-        return {}
+        pass
+    return db
+
+def load_anti_data():
+    anti_db = {}
+    try:
+        df = conn.read(worksheet="anti", ttl="3m")
+        if df is not None and not df.empty and 'date' in df.columns:
+            for _, row in df.iterrows():
+                if pd.notna(row['date']) and pd.notna(row['workers']):
+                    anti_db[str(row['date'])] = [w.strip() for w in str(row['workers']).split(',') if w.strip()]
+    except:
+        pass
+    return anti_db
 
 # --- [DB 함수] 2. 재고 및 로그 데이터 로드 ---
 def load_inventory_data():
-    # 매 화면 렌더링마다 read하지 않고 세션 스토리지에 기억된 값이 있다면 그것을 반환하여 API 소모를 막습니다.
     if "df_inv_cached" in st.session_state and "df_logs_cached" in st.session_state:
         return st.session_state["df_inv_cached"], st.session_state["df_logs_cached"]
         
@@ -110,9 +130,12 @@ def load_inventory_data():
 if 'db' not in st.session_state:
     st.session_state['db'] = load_schedule_data()
 
+if 'anti_db' not in st.session_state:
+    st.session_state['anti_db'] = load_anti_data()
+
 WORKER_COLORS = {
-    "김채영": "#FFD700", "임예린": "#FFB6C1", "조가율": "#98FB98", 
-    "이지영": "#ADD8E6", "이혁": "#E6E6FA", "이레": "#FFCC99"
+    "박성빈": "#FFD700", "오승현": "#FFB6C1", "우유리": "#98FB98", 
+    "이지영": "#ADD8E6", "이혁": "#E6E6FA", "홍시현": "#FFCC99"
 }
 kr_holidays = holidays.KR(language='ko')
 today_val = date.today()
@@ -144,6 +167,7 @@ if main_menu == "📅 근무 일정 관리":
     selected_month = st.sidebar.selectbox("월 선택", list(range(1, 13)), index=today_val.month - 1)
     filter_name = st.sidebar.selectbox("🔍 근무자 필터링", ["전체보기"] + list(WORKER_COLORS.keys()))
 
+    # --- 구글 시트 저장 함수 (근무 일정) ---
     def save_to_sheets(date_str, workers_list):
         try:
             new_db = st.session_state['db'].copy()
@@ -156,6 +180,26 @@ if main_menu == "📅 근무 일정 관리":
         except Exception as e:
             st.error(f"저장 중 오류가 발생했습니다. ({e})")
 
+    # --- 구글 시트 저장 함수 (안티 일정) ---
+    def save_anti_to_sheets(date_str, anti_workers_list):
+        try:
+            new_anti = st.session_state['anti_db'].copy()
+            new_anti[date_str] = anti_workers_list
+            rows = [{"date": d, "workers": ",".join(ws)} for d, ws in new_anti.items() if ws]
+            df = pd.DataFrame(rows)
+            conn.update(worksheet="anti", data=df)
+            st.session_state['anti_db'] = new_anti
+
+            # 안티로 지정된 근무자가 기존 근무에 배정되어 있다면 자동 차단 및 해제
+            current_assigned = st.session_state['db'].get(date_str, [])
+            updated_assigned = [w for w in current_assigned if w not in anti_workers_list]
+            if len(current_assigned) != len(updated_assigned):
+                save_to_sheets(date_str, updated_assigned)
+                
+            st.cache_data.clear()
+        except Exception as e:
+            st.error(f"안티 일정 저장 중 오류가 발생했습니다. 시트에 'anti' 탭이 있는지 확인하세요. ({e})")
+
     first_day = date(current_year, selected_month, 1)
     last_day = (date(current_year, selected_month + 1, 1) if selected_month < 12 else date(current_year + 1, 1, 1)) - timedelta(days=1)
     start_pad = (first_day.weekday() + 1) % 7 
@@ -163,15 +207,18 @@ if main_menu == "📅 근무 일정 관리":
     col_cal, col_stat = st.columns([4, 1])
 
     with col_cal:
-        st.title(f"{selected_month}월 근무현황")
+        st.title(f"{selected_month}월 근무 및 안티 현황")
 
+        # ----------------📱 리스트 보기 (모바일) ----------------
         if view_mode == "📱 리스트 보기 (모바일)":
             for d in range(1, last_day.day + 1):
                 t_date = date(current_year, selected_month, d)
                 d_str = t_date.strftime('%Y-%m-%d')
-                assigned = st.session_state['db'].get(d_str, [])
                 
-                is_match = (filter_name == "전체보기") or (filter_name in assigned)
+                assigned = st.session_state['db'].get(d_str, [])
+                anti_assigned = st.session_state['anti_db'].get(d_str, [])
+                
+                is_match = (filter_name == "전체보기") or (filter_name in assigned) or (filter_name in anti_assigned)
                 is_today = (t_date == today_val)
                 is_off = (t_date in kr_holidays) or (t_date.weekday() in [0, 6])
                 
@@ -187,23 +234,41 @@ if main_menu == "📅 근무 일정 관리":
                 """, unsafe_allow_html=True)
                 
                 if not is_off:
+                    # 선택 가능한 근무자 옵션 (안티 인원 제외)
+                    available_options = [w for w in WORKER_COLORS.keys() if w not in anti_assigned]
+                    # 현재 근무자 중 안티로 지정된 사람은 자동 제거된 상태로 필터링
+                    valid_assigned = [w for w in assigned if w not in anti_assigned]
+
                     if is_admin:
-                        # 무한 루프 Rerun 방지를 위해 변경 감지 후 전송 처리 분리 조율 가능하나 기존 코드 유결 유지
-                        new = st.multiselect(f"m_edit_{d}", list(WORKER_COLORS.keys()), default=assigned, key=f"m_{d_str}", label_visibility="collapsed")
-                        if new != assigned:
-                            save_to_sheets(d_str, new)
-                            st.rerun()
+                        col_m1, col_m2 = st.columns(2)
+                        with col_m1:
+                            st.caption("🟢 근무 배정")
+                            new = st.multiselect(f"m_edit_{d}", available_options, default=valid_assigned, key=f"m_{d_str}", label_visibility="collapsed")
+                            if new != assigned:
+                                save_to_sheets(d_str, new)
+                                st.rerun()
+                        with col_m2:
+                            st.caption("🚫 안티 지정 (근무 불가능)")
+                            new_anti = st.multiselect(f"m_anti_{d}", list(WORKER_COLORS.keys()), default=anti_assigned, key=f"m_anti_{d_str}", label_visibility="collapsed")
+                            if new_anti != anti_assigned:
+                                save_anti_to_sheets(d_str, new_anti)
+                                st.rerun()
                     else:
-                        if assigned:
-                            tags = "".join([f"<span class='worker-tag' style='background-color:{WORKER_COLORS[n]}'>{n}</span>" for n in assigned])
-                            st.markdown(f"<div>{tags}</div>", unsafe_allow_html=True)
+                        if valid_assigned:
+                            tags = "".join([f"<span class='worker-tag' style='background-color:{WORKER_COLORS[n]}'>{n}</span>" for n in valid_assigned])
+                            st.markdown(f"<div><b>근무:</b> {tags}</div>", unsafe_allow_html=True)
                         else:
                             st.caption("배정 인원 없음")
+                            
+                        if anti_assigned:
+                            anti_tags = "".join([f"<span class='anti-tag'>🚫 {n}</span>" for n in anti_assigned])
+                            st.markdown(f"<div><b>안티:</b> {anti_tags}</div>", unsafe_allow_html=True)
                 else:
                     st.caption("휴무")
                 st.write("")
 
-        else: # PC 달력 보기
+        # ---------------- 📅 달력 보기 (PC) ----------------
+        else: 
             header_cols = st.columns(7)
             for i, day in enumerate(["일", "월", "화", "수", "목", "금", "토"]):
                 header_cols[i].markdown(f"<div style='text-align:center; font-weight:bold;'>{day}</div>", unsafe_allow_html=True)
@@ -219,10 +284,13 @@ if main_menu == "📅 근무 일정 관리":
                         else:
                             t_date = date(current_year, selected_month, day_counter)
                             t_str = t_date.strftime('%Y-%m-%d')
+                            
                             assigned = st.session_state['db'].get(t_str, [])
+                            anti_assigned = st.session_state['anti_db'].get(t_str, [])
+                            
                             is_today = (t_date == today_val)
                             is_off = (t_date in kr_holidays) or (t_date.weekday() in [0, 6])
-                            is_match = (filter_name == "전체보기") or (filter_name in assigned)
+                            is_match = (filter_name == "전체보기") or (filter_name in assigned) or (filter_name in anti_assigned)
 
                             box_class = "today-box" if is_today else ""
                             dim_style = f"opacity: {'1.0' if is_match else '0.3'};"
@@ -230,37 +298,61 @@ if main_menu == "📅 근무 일정 관리":
                             st.markdown(f"<div class='date-header {box_class}' style='{dim_style} color: {'red' if is_off else 'black'};'>{day_counter}</div>", unsafe_allow_html=True)
                             
                             if not is_off:
+                                available_options = [w for w in WORKER_COLORS.keys() if w not in anti_assigned]
+                                valid_assigned = [w for w in assigned if w not in anti_assigned]
+
                                 if is_admin:
-                                    new = st.multiselect(f"p_edit_{day_counter}", list(WORKER_COLORS.keys()), default=assigned, key=f"p_{t_str}", label_visibility="collapsed")
+                                    st.caption("🟢 근무")
+                                    new = st.multiselect(f"p_edit_{day_counter}", available_options, default=valid_assigned, key=f"p_{t_str}", label_visibility="collapsed")
                                     if new != assigned:
                                         save_to_sheets(t_str, new)
                                         st.rerun()
+
+                                    st.caption("🚫 안티")
+                                    new_anti = st.multiselect(f"p_anti_{day_counter}", list(WORKER_COLORS.keys()), default=anti_assigned, key=f"p_anti_{t_str}", label_visibility="collapsed")
+                                    if new_anti != anti_assigned:
+                                        save_anti_to_sheets(t_str, new_anti)
+                                        st.rerun()
                                 else:
-                                    for n in assigned:
+                                    for n in valid_assigned:
                                         st.markdown(f"<span class='worker-tag' style='background-color:{WORKER_COLORS[n]}'>{n}</span>", unsafe_allow_html=True)
+                                    for n in anti_assigned:
+                                        st.markdown(f"<span class='anti-tag'>🚫 {n}</span>", unsafe_allow_html=True)
                             day_counter += 1
 
     with col_stat:
         st.subheader("📊 통계")
         export_data = []
         month_workers = []
+        month_antis = []
         
         for d in range(1, last_day.day + 1):
             d_date = date(current_year, selected_month, d)
             d_str = d_date.strftime('%Y-%m-%d')
             assigned = st.session_state['db'].get(d_str, [])
+            anti_assigned = st.session_state['anti_db'].get(d_str, [])
+            
             month_workers.extend(assigned)
+            month_antis.extend(anti_assigned)
+            
             export_data.append({
                 "날짜": d_str, 
                 "요일": ["월","화","수","목","금","토","일"][d_date.weekday()], 
                 "근무자": ", ".join(assigned), 
+                "안티인원": ", ".join(anti_assigned),
                 "비고": kr_holidays.get(d_date, "")
             })
         
         for name, color in WORKER_COLORS.items():
             if filter_name != "전체보기" and name != filter_name: continue
             count = month_workers.count(name)
-            st.markdown(f"<div style='background-color:{color}; padding:10px; border-radius:5px; margin-bottom:5px; font-weight:bold; color:black;'>{name}: {count}회</div>", unsafe_allow_html=True)
+            anti_count = month_antis.count(name)
+            st.markdown(f"""
+                <div style='background-color:{color}; padding:8px; border-radius:5px; margin-bottom:5px; color:black;'>
+                    <b>{name}</b><br>
+                    <small>🟢 근무: {count}회 | 🚫 안티: {anti_count}회</small>
+                </div>
+            """, unsafe_allow_html=True)
         
         st.divider()
         st.subheader("💾 내보내기")
@@ -269,7 +361,7 @@ if main_menu == "📅 근무 일정 관리":
             st.download_button(
                 label="📊 Excel 다운로드", 
                 data=excel_data, 
-                file_name=f"근무표_{selected_month}월.xlsx", 
+                file_name=f"근무및안티표_{selected_month}월.xlsx", 
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
@@ -283,7 +375,6 @@ elif main_menu == "📦 재고 관리 시스템":
     with col_refresh:
         st.write("") 
         if st.button("🔄 실시간 현황 새로고침", use_container_width=True):
-            # 새로고침 버튼을 누를 때만 캐시 스토리지를 강제로 날려 구글 시트를 다시 읽어옵니다.
             if "df_inv_cached" in st.session_state: del st.session_state["df_inv_cached"]
             if "df_logs_cached" in st.session_state: del st.session_state["df_logs_cached"]
             st.cache_data.clear()
@@ -427,8 +518,6 @@ elif main_menu == "📦 재고 관리 시스템":
                     
                     df_inv.at[idx, "수량"] = new_qty
                     conn.update(worksheet="inventory", data=df_inv)
-                    
-                    # 캐시 강제 무효화 및 메모리 수동 동기화
                     st.session_state["df_inv_cached"] = df_inv
                     
                     new_log = pd.DataFrame([{
