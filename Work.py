@@ -475,8 +475,8 @@ if main_menu == "📅 근무 일정 관리":
                     # 주중 요일 선택 체크박스 (월~금)
                     selected = st.multiselect(
                         f"{worker}님의 고정 불가능 요일 선택",
-                        options=["월", "화", "수", "목", "금"],
-                        default=[d for d in default_days if d in ["월", "화", "수", "목", "금"]],
+                        options=["화", "수", "목", "금", "토"],
+                        default=[d for d in default_days if d in ["화", "수", "목", "금", "토"]],
                         key=f"anti_day_select_{worker}"
                     )
                     if selected:
@@ -747,3 +747,23 @@ elif main_menu == "📦 재고 관리 시스템":
             st.dataframe(df_logs.iloc[::-1], use_container_width=True, hide_index=True)
         else:
             st.info("기록된 변경 이력이 없습니다.")
+
+st.markdown("---")
+st.markdown(
+    """
+    <div style='
+        text-align: center; 
+        padding: 10px; 
+        background-color: #f8f9fa; 
+        border: 1px solid #e9ecef; 
+        border-radius: 6px; 
+        color: #868e96; 
+        font-size: 0.8rem;
+        margin-top: 20px;
+    '>
+        <p style='margin: 0;'>© 2026 Integrated Logistics Management System | Developed for Team Efficiency</p>
+        <p style='margin: 0; font-size: 0.75rem; color: #adb5bd;'>Version 2.1 • All rights reserved</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
