@@ -201,7 +201,7 @@ current_year = 2026
 st.sidebar.title("⚙️ 통합 관리 시스템")
 
 password = st.sidebar.text_input("관리자 비밀번호", type="password")
-is_admin = (password == "1234") 
+is_admin = (password == "1142") 
 
 if is_admin:
     st.sidebar.success("🔓 관리자 권한 활성화")
@@ -356,7 +356,7 @@ if main_menu == "📅 근무 일정 관리":
                             else:
                                 st.caption("배정 인원 없음")
                                 
-                            if all_anti:
+                            if is_admin and all_anti:
                                 anti_tags = ""
                                 for n in all_anti:
                                     if n in fixed_anti_workers:
@@ -420,11 +420,12 @@ if main_menu == "📅 근무 일정 관리":
                                     else:
                                         for n in valid_assigned:
                                             st.markdown(f"<span class='worker-tag' style='background-color:{WORKER_COLORS.get(n, '#eee')}'>{n}</span>", unsafe_allow_html=True)
-                                        for n in all_anti:
-                                            if n in fixed_anti_workers:
-                                                st.markdown(f"<span class='fixed-anti-tag'>🚫[고정] {n}</span>", unsafe_allow_html=True)
-                                            else:
-                                                st.markdown(f"<span class='anti-tag'>🚫 {n}</span>", unsafe_allow_html=True)
+                                        if is_admin:    
+                                            for n in all_anti:
+                                                if n in fixed_anti_workers:
+                                                    st.markdown(f"<span class='fixed-anti-tag'>🚫[고정] {n}</span>", unsafe_allow_html=True)
+                                                else:
+                                                    st.markdown(f"<span class='anti-tag'>🚫 {n}</span>", unsafe_allow_html=True)
                                 day_counter += 1
 
         with col_stat:
@@ -446,22 +447,27 @@ if main_menu == "📅 근무 일정 관리":
                 month_workers.extend(assigned)
                 month_antis.extend(all_anti)
                 
-                export_data.append({
+                # 엑셀 내보내기 항목 조건 분기
+                row_data = {
                     "날짜": d_str, 
                     "요일": day_name, 
                     "근무자": ", ".join(assigned), 
-                    "안티인원": ", ".join(all_anti),
                     "비고": kr_holidays.get(d_date, "")
-                })
+                }
+                if is_admin:
+                    row_data["안티인원"] = ", ".join(all_anti)
+                export_data.append(row_data)
             
             for name, color in WORKER_COLORS.items():
                 if filter_name != "전체보기" and name != filter_name: continue
                 count = month_workers.count(name)
                 anti_count = month_antis.count(name)
+                # 개인별 통계 카드 조건 분기
+                anti_stat_text = f" | 🚫 안티: {anti_count}회" if is_admin else ""
                 st.markdown(f"""
                     <div style='background-color:{color}; padding:8px; border-radius:5px; margin-bottom:5px; color:black;'>
                         <b>{name}</b><br>
-                        <small>🟢 근무: {count}회 | 🚫 안티: {anti_count}회</small>
+                        <small>🟢 근무: {count}회{anti_stat_text}</small>
                     </div>
                 """, unsafe_allow_html=True)
             
