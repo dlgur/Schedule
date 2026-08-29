@@ -184,6 +184,21 @@ if 'anti_db' not in st.session_state:
 if 'anti_days_db' not in st.session_state:
     st.session_state['anti_days_db'] = load_anti_days_data()
 
+# 데이터 세션 상태 동적 로드 (세션이 비어있으면 DB에서 다시 읽어옴)
+if 'worker_colors' not in st.session_state:
+    st.session_state['worker_colors'] = load_workers()
+
+if 'db' not in st.session_state:
+    st.session_state['db'] = load_schedule_data()
+
+if 'anti_db' not in st.session_state:
+    st.session_state['anti_db'] = load_anti_data()
+
+if 'anti_days_db' not in st.session_state:
+    st.session_state['anti_days_db'] = load_anti_days_data()
+
+WORKER_COLORS = st.session_state['worker_colors']
+
 WORKER_COLORS = st.session_state['worker_colors']
 DAYS_MAP = ["월", "화", "수", "목", "금", "토", "일"]
 kr_holidays = holidays.KR(language='ko')
@@ -202,6 +217,38 @@ if is_admin:
     st.sidebar.success("🔓 관리자 권한 활성화")
 else:
     st.sidebar.info("👁️ 조회 전용 모드")
+
+st.sidebar.divider()
+main_menu = st.sidebar.radio("원하는 시스템을 선택하세요", ["📅 근무 일정 관리", "📦 재고 관리 시스템"])
+st.sidebar.divider()
+
+# ==========================================
+# 4. 사이드바 메인 공통 제어 (권한, 동기화 및 메뉴)
+# ==========================================
+st.sidebar.title("⚙️ 통합 관리 시스템")
+
+password = st.sidebar.text_input("관리자 비밀번호", type="password")
+is_admin = (password == "1234") 
+
+if is_admin:
+    st.sidebar.success("🔓 관리자 권한 활성화")
+else:
+    st.sidebar.info("👁️ 조회 전용 모드")
+
+# --- 🔄 [신규] 관리자 전용 데이터 다시 불러오기 버튼 ---
+if is_admin:
+    if st.sidebar.button("🔄 시트 데이터 다시 불러오기", use_container_width=True):
+        # Streamlit 데이터 캐시 전체 삭제
+        st.cache_data.clear()
+        
+        # 세션 상태에 저장된 DB 데이터 초기화 (구글 시트에서 재로드 유도)
+        keys_to_clear = ['worker_colors', 'db', 'anti_db', 'anti_days_db', 'df_inv_cached', 'df_logs_cached']
+        for key in keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
+                
+        st.sidebar.success("구글 시트 데이터를 다시 로드했습니다!")
+        st.rerun()
 
 st.sidebar.divider()
 main_menu = st.sidebar.radio("원하는 시스템을 선택하세요", ["📅 근무 일정 관리", "📦 재고 관리 시스템"])
