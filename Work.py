@@ -134,8 +134,8 @@ if 'anti_db' not in st.session_state:
     st.session_state['anti_db'] = load_anti_data()
 
 WORKER_COLORS = {
-    "박성빈": "#FFD700", "오승현": "#FFB6C1", "우유리": "#98FB98", 
-    "이지영": "#ADD8E6", "이혁": "#E6E6FA", "홍시현": "#FFCC99"
+    "임예린": "#FFD700", "이레": "#FFB6C1", "조가율": "#98FB98", 
+    "이지영": "#ADD8E6", "이혁": "#E6E6FA", "김채영": "#FFCC99"
 }
 kr_holidays = holidays.KR(language='ko')
 today_val = date.today()
