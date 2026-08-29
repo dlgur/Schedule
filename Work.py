@@ -184,19 +184,6 @@ if 'anti_db' not in st.session_state:
 if 'anti_days_db' not in st.session_state:
     st.session_state['anti_days_db'] = load_anti_days_data()
 
-# 데이터 세션 상태 동적 로드 (세션이 비어있으면 DB에서 다시 읽어옴)
-if 'worker_colors' not in st.session_state:
-    st.session_state['worker_colors'] = load_workers()
-
-if 'db' not in st.session_state:
-    st.session_state['db'] = load_schedule_data()
-
-if 'anti_db' not in st.session_state:
-    st.session_state['anti_db'] = load_anti_data()
-
-if 'anti_days_db' not in st.session_state:
-    st.session_state['anti_days_db'] = load_anti_days_data()
-
 WORKER_COLORS = st.session_state['worker_colors']
 
 WORKER_COLORS = st.session_state['worker_colors']
