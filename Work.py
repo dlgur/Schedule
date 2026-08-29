@@ -193,21 +193,7 @@ today_val = date.today()
 current_year = 2026
 
 # ==========================================
-# 4. 사이드바 메인 공통 제어 (권한 및 메뉴)
-# ==========================================
-st.sidebar.title("⚙️ 통합 관리 시스템")
 
-password = st.sidebar.text_input("관리자 비밀번호", type="password")
-is_admin = (password == "1234") 
-
-if is_admin:
-    st.sidebar.success("🔓 관리자 권한 활성화")
-else:
-    st.sidebar.info("👁️ 조회 전용 모드")
-
-st.sidebar.divider()
-main_menu = st.sidebar.radio("원하는 시스템을 선택하세요", ["📅 근무 일정 관리", "📦 재고 관리 시스템"])
-st.sidebar.divider()
 
 # ==========================================
 # 4. 사이드바 메인 공통 제어 (권한, 동기화 및 메뉴)
