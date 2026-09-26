@@ -6,46 +6,29 @@ from datetime import datetime, date, timedelta
 from io import BytesIO
 
 # ==========================================
-# 0. 추모 모드 글로벌 설정 (코드 상에서만 제어)
-# ==========================================
-MEMORIAL_MODE = True  # 켜기: True / 끄기: False
-
-# ==========================================
 # 1. 페이지 설정 및 공통 CSS 디자인
 # ==========================================
 st.set_page_config(page_title="통합 물류 관리 시스템", layout="wide")
 
-# 추모 모드 여부에 따른 CSS 색상 조건 분기
-if MEMORIAL_MODE:
-    css_today_box = "background-color: #f1f3f5 !important; border: 2px solid #495057 !important;"
-    css_today_badge = "background-color: #495057; color: #ffffff;"
-    css_anti_tag = "color: #495057; background-color: #e9ecef; border: 1px solid #ced4da;"
-    css_fixed_anti_tag = "color: #343a40; background-color: #f1f3f5; border: 1px solid #adb5bd;"
-else:
-    css_today_box = "background-color: #fff9db !important; border: 2px solid #fcc419 !important;"
-    css_today_badge = "background-color: #fcc419; color: black;"
-    css_anti_tag = "color: #c92a2a; background-color: #ffe3e3; border: 1px solid #ffa8a8;"
-    css_fixed_anti_tag = "color: #d9480f; background-color: #fff4e6; border: 1px solid #ffd8a8;"
-
-st.markdown(f"""
+st.markdown("""
     <style>
-    [data-testid="column"] {{
+    [data-testid="column"] {
         height: 310px !important; 
         border: 1px solid #dee2e6;
         padding: 10px !important;
         background-color: #ffffff;
         border-radius: 8px;
-    }}
-    .today-box {{ {css_today_box} }}
-    .mobile-card {{
+    }
+    .today-box { background-color: #fff9db !important; border: 2px solid #fcc419 !important; }
+    .mobile-card {
         border: 1px solid #ddd;
         border-radius: 10px;
         padding: 15px;
         margin-bottom: 10px;
         background-color: white;
         box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
-    }}
-    .worker-tag {{
+    }
+    .worker-tag {
         display: inline-block;
         padding: 4px 10px;
         border-radius: 6px;
@@ -54,39 +37,44 @@ st.markdown(f"""
         margin: 2px;
         color: black;
         border: 1px solid rgba(0,0,0,0.1);
-    }}
-    .anti-tag {{
+    }
+    .anti-tag {
         display: inline-block;
         padding: 3px 8px;
         border-radius: 4px;
         font-size: 11px;
         font-weight: bold;
         margin: 2px;
-        {css_anti_tag}
-    }}
-    .fixed-anti-tag {{
+        color: #c92a2a;
+        background-color: #ffe3e3;
+        border: 1px solid #ffa8a8;
+    }
+    .fixed-anti-tag {
         display: inline-block;
         padding: 3px 8px;
         border-radius: 4px;
         font-size: 11px;
         font-weight: bold;
         margin: 2px;
-        {css_fixed_anti_tag}
-    }}
-    .today-badge {{
-        {css_today_badge}
+        color: #d9480f;
+        background-color: #fff4e6;
+        border: 1px solid #ffd8a8;
+    }
+    .today-badge {
+        background-color: #fcc419;
+        color: black;
         font-size: 0.7rem;
         padding: 2px 6px;
         border-radius: 4px;
         margin-left: 5px;
         display: inline-block;
-    }}
-    .date-header {{
+    }
+    .date-header {
         font-size: 1.2rem;
         font-weight: bold;
         border-bottom: 2px solid #f1f3f5;
         margin-bottom: 10px;
-    }}
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -102,43 +90,30 @@ def to_excel(df):
 # ==========================================
 conn = st.connection("gsheets", type=GSheetsConnection)
 
-# 무채색 그레이스케일 팔레트
-MONO_PALETTE = ["#e9ecef", "#dee2e6", "#ced4da", "#adb5bd", "#f1f3f5", "#e0e0e0"]
-
 # --- [DB 함수 1] 근무자 목록 참조 (workers 탭) ---
-def load_workers():
+def load_workers(ttl="3m"):
     default_workers = {
         "박성빈": "#FFD700", "오승현": "#FFB6C1", "우유리": "#98FB98", 
         "이지영": "#ADD8E6", "이혁": "#E6E6FA", "홍시현": "#FFCC99"
     }
-    workers = {}
     try:
-        df = conn.read(worksheet="workers", ttl="3m")
+        df = conn.read(worksheet="workers", ttl=ttl)
         if df is not None and not df.empty and 'name' in df.columns:
+            workers = {}
             for _, row in df.iterrows():
                 if pd.notna(row['name']):
                     color = row['color'] if ('color' in df.columns and pd.notna(row['color'])) else "#E6E6FA"
                     workers[str(row['name']).strip()] = str(color).strip()
+            return workers if workers else default_workers
     except:
-        workers = default_workers
-
-    if not workers:
-        workers = default_workers
-
-    # 추모 모드일 경우 무채색 톤으로 일괄 변환
-    if MEMORIAL_MODE:
-        mono_workers = {}
-        for idx, (name, _) in enumerate(workers.items()):
-            mono_workers[name] = MONO_PALETTE[idx % len(MONO_PALETTE)]
-        return mono_workers
-
-    return workers
+        pass
+    return default_workers
 
 # --- [DB 함수 2] 근무 일정 데이터 로드 (Sheet1 탭) ---
-def load_schedule_data():
+def load_schedule_data(ttl="3m"):
     db = {}
     try:
-        df = conn.read(worksheet="Sheet1", ttl="3m") 
+        df = conn.read(worksheet="Sheet1", ttl=ttl) 
         if df is not None and not df.empty and 'date' in df.columns:
             for _, row in df.iterrows():
                 if pd.notna(row['date']) and pd.notna(row['workers']):
@@ -148,10 +123,10 @@ def load_schedule_data():
     return db
 
 # --- [DB 함수 3] 날짜별 안티 일정 로드 (anti 탭) ---
-def load_anti_data():
+def load_anti_data(ttl="3m"):
     anti_db = {}
     try:
-        df = conn.read(worksheet="anti", ttl="3m")
+        df = conn.read(worksheet="anti", ttl=ttl)
         if df is not None and not df.empty and 'date' in df.columns:
             for _, row in df.iterrows():
                 if pd.notna(row['date']) and pd.notna(row['workers']):
@@ -161,10 +136,10 @@ def load_anti_data():
     return anti_db
 
 # --- [DB 함수 4] 고정 안티 요일 데이터 로드 (anti_days 탭) ---
-def load_anti_days_data():
+def load_anti_days_data(ttl="3m"):
     anti_days = {}
     try:
-        df = conn.read(worksheet="anti_days", ttl="3m")
+        df = conn.read(worksheet="anti_days", ttl=ttl)
         if df is not None and not df.empty and 'worker' in df.columns:
             for _, row in df.iterrows():
                 if pd.notna(row['worker']) and pd.notna(row['days']):
@@ -175,21 +150,22 @@ def load_anti_days_data():
     return anti_days
 
 # --- [DB 함수 5] 재고 및 로그 데이터 로드 ---
-def load_inventory_data():
-    if "df_inv_cached" in st.session_state and "df_logs_cached" in st.session_state:
+def load_inventory_data(force_reload=False):
+    if not force_reload and "df_inv_cached" in st.session_state and "df_logs_cached" in st.session_state:
         return st.session_state["df_inv_cached"], st.session_state["df_logs_cached"]
         
     df_inv = pd.DataFrame(columns=["품목코드", "품목명", "수량", "비고", "박스당수량", "개당음료수"])
     df_logs = pd.DataFrame(columns=["일시", "작업구분", "품목명", "내용", "작업자"])
     
+    ttl_val = 0 if force_reload else "3m"
     try:
-        df_inv = conn.read(worksheet="inventory", ttl="3m")
+        df_inv = conn.read(worksheet="inventory", ttl=ttl_val)
         st.session_state["df_inv_cached"] = df_inv
     except:
         st.sidebar.error("⚠️ 구글 시트에서 'inventory' 탭을 찾을 수 없습니다.")
         
     try:
-        df_logs = conn.read(worksheet="logs", ttl="3m")
+        df_logs = conn.read(worksheet="logs", ttl=ttl_val)
         st.session_state["df_logs_cached"] = df_logs
     except:
         st.sidebar.error("⚠️ 구글 시트에서 'logs' 탭을 찾을 수 없습니다.")
@@ -228,17 +204,19 @@ if is_admin:
 else:
     st.sidebar.info("👁️ 조회 전용 모드")
 
-# --- 🔄 관리자 전용 데이터 다시 불러오기 버튼 ---
+# --- 🔄 관리자 전용 데이터 다시 불러오기 버튼 (수정된 안전 로직) ---
 if is_admin:
     if st.sidebar.button("🔄 시트 데이터 다시 불러오기", use_container_width=True):
         st.cache_data.clear()
-        keys_to_clear = ['worker_colors', 'db', 'anti_db', 'anti_days_db', 'df_inv_cached', 'df_logs_cached']
-        for key in keys_to_clear:
-            if key in st.session_state:
-                del st.session_state[key]
-                
+        
+        # ttl=0으로 바로 새로운 데이터를 가져와 세션에 직접 할당
+        st.session_state['worker_colors'] = load_workers(ttl=0)
+        st.session_state['db'] = load_schedule_data(ttl=0)
+        st.session_state['anti_db'] = load_anti_data(ttl=0)
+        st.session_state['anti_days_db'] = load_anti_days_data(ttl=0)
+        load_inventory_data(force_reload=True)
+        
         st.sidebar.success("구글 시트 데이터를 다시 로드했습니다!")
-        st.rerun()
 
 st.sidebar.divider()
 main_menu = st.sidebar.radio("원하는 시스템을 선택하세요", ["📅 근무 일정 관리", "📦 재고 관리 시스템"])
@@ -310,9 +288,8 @@ if main_menu == "📅 근무 일정 관리":
         col_cal, col_stat = st.columns([4, 1])
 
         with col_cal:
-            st.title(f"{selected_month}월 근무 현황")
+            st.title(f"{selected_month}월 근무 및 안티 현황")
 
-            # ---------------- 📱 리스트 보기 (모바일) ----------------
             if view_mode == "📱 리스트 보기 (모바일)":
                 for d in range(1, last_day.day + 1):
                     t_date = date(current_year, selected_month, d)
@@ -328,13 +305,12 @@ if main_menu == "📅 근무 일정 관리":
                     is_today = (t_date == today_val)
                     is_off = (t_date in kr_holidays) or (t_date.weekday() in [0, 6])
                     
-                    today_card_style = css_today_box if is_today else ""
-                    card_style = f"opacity: {'1.0' if is_match else '0.3'}; {today_card_style}"
+                    card_style = f"opacity: {'1.0' if is_match else '0.3'}; {'border:2px solid #fcc419; background-color:#fff9db;' if is_today else ''}"
                     today_badge = "<span class='today-badge'>TODAY</span>" if is_today else ""
                     
                     st.markdown(f"""
                         <div class='mobile-card' style='{card_style}'>
-                            <div style='color:{"#868e96" if (is_off and MEMORIAL_MODE) else ("red" if is_off else "black")}; font-weight:bold; font-size:1.1rem;'>
+                            <div style='color:{"red" if is_off else "black"}; font-weight:bold; font-size:1.1rem;'>
                                 {d}일 ({day_name}) {kr_holidays.get(t_date, "")} {today_badge}
                             </div>
                         </div>
@@ -377,7 +353,6 @@ if main_menu == "📅 근무 일정 관리":
                         st.caption("휴무")
                     st.write("")
 
-            # ---------------- 📅 달력 보기 (PC) ----------------
             else: 
                 header_cols = st.columns(7)
                 for i, day in enumerate(["일", "월", "화", "수", "목", "금", "토"]):
@@ -407,9 +382,8 @@ if main_menu == "📅 근무 일정 관리":
 
                                 box_class = "today-box" if is_today else ""
                                 dim_style = f"opacity: {'1.0' if is_match else '0.3'};"
-                                date_color = "#868e96" if (is_off and MEMORIAL_MODE) else ("red" if is_off else "black")
                                 
-                                st.markdown(f"<div class='date-header {box_class}' style='{dim_style} color: {date_color};'>{day_counter}</div>", unsafe_allow_html=True)
+                                st.markdown(f"<div class='date-header {box_class}' style='{dim_style} color: {'red' if is_off else 'black'};'>{day_counter}</div>", unsafe_allow_html=True)
                                 
                                 if not is_off:
                                     available_options = [w for w in WORKER_COLORS.keys() if w not in all_anti]
@@ -565,11 +539,9 @@ elif main_menu == "📦 재고 관리 시스템":
     with col_refresh:
         st.write("") 
         if st.button("🔄 실시간 현황 새로고침", use_container_width=True):
-            if "df_inv_cached" in st.session_state: del st.session_state["df_inv_cached"]
-            if "df_logs_cached" in st.session_state: del st.session_state["df_logs_cached"]
             st.cache_data.clear()
+            load_inventory_data(force_reload=True)
             st.toast("최신 데이터를 성공적으로 동기화했습니다!")
-            st.rerun()
     
     df_inv, df_logs = load_inventory_data()
     
@@ -620,18 +592,11 @@ elif main_menu == "📦 재고 관리 시스템":
             def style_by_index(row):
                 idx = row.name
                 raw_drinks_val = display_df.loc[idx, "_raw_drinks"]
-                if MEMORIAL_MODE:
-                    if raw_drinks_val <= 10:
-                        return ['background-color: #e9ecef; color: #495057; font-weight: bold;'] * len(row)
-                    elif raw_drinks_val <= 30:
-                        return ['background-color: #f8f9fa; color: #6c757d;'] * len(row)
-                    return [''] * len(row)
-                else:
-                    if raw_drinks_val <= 10:
-                        return ['background-color: #ffdde1; color: #c92a2a; font-weight: bold;'] * len(row)
-                    elif raw_drinks_val <= 30:
-                        return ['background-color: #fff3bf; color: #e67e22;'] * len(row)
-                    return [''] * len(row)
+                if raw_drinks_val <= 10:
+                    return ['background-color: #ffdde1; color: #c92a2a; font-weight: bold;'] * len(row)
+                elif raw_drinks_val <= 30:
+                    return ['background-color: #fff3bf; color: #e67e22;'] * len(row)
+                return [''] * len(row)
 
             final_view_df = display_df[existing_cols]
             styled_df = final_view_df.style.apply(style_by_index, axis=1)
@@ -721,3 +686,89 @@ elif main_menu == "📦 재고 관리 시스템":
                     
                     st.cache_data.clear()
                     st.rerun()
+
+    with sub_tab3:
+        st.subheader("➕ 신규 품목 등록 및 마스터 규격 설정")
+        if not is_admin:
+            st.warning("🔒 수정 권한이 없습니다. 사이드바에 올바른 관리자 비밀번호를 입력해 주세요.")
+        else:
+            with st.form("inv_insert_form", clear_on_submit=True):
+                code = st.text_input("품목코드 (난독화 SKU 패턴 권장)")
+                name = st.text_input("품목명")
+                
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    box_qty = st.number_input("📦 1박스당 들어있는 기본 낱개 개수", min_value=1, step=1, value=1)
+                with col_m2:
+                    is_calc_disabled = st.checkbox("컵, 빨대, 얼음 등 음료수 계산 제외 품목 설정")
+                    drink_ratio = st.number_input("🥤 낱개 1개당 제조 가능한 음료 잔수 (위 체크 시 무시됨)", min_value=0, step=1, value=1)
+                
+                st.divider()
+                qty = st.number_input("초기 보유 수량 (낱개 기준)", min_value=0, step=1, value=0)
+                remark = st.text_input("비고 항목")
+                
+                add_btn = st.form_submit_button("신규 마스터 등록")
+                
+                if add_btn:
+                    final_ratio = 0 if is_calc_disabled else int(drink_ratio)
+                    
+                    if not code or not name:
+                        st.error("품목코드와 품목명은 누락될 수 없습니다.")
+                    elif str(code) in df_inv["품목코드"].astype(str).values:
+                        st.error("동일한 품목코드가 이미 존재합니다.")
+                    else:
+                        new_row = pd.DataFrame([{
+                            "품목코드": code, 
+                            "품목명": name, 
+                            "수량": int(qty), 
+                            "비고": remark,
+                            "박스당수량": int(box_qty),
+                            "개당음료수": final_ratio
+                        }])
+                        df_inv = pd.concat([df_inv, new_row], ignore_index=True)
+                        conn.update(worksheet="inventory", data=df_inv)
+                        st.session_state["df_inv_cached"] = df_inv
+                        
+                        ratio_log_text = "계산제외" if final_ratio == 0 else f"{final_ratio}잔"
+                        new_log = pd.DataFrame([{
+                            "일시": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "작업구분": "품목등록",
+                            "품목명": name,
+                            "내용": f"마스터 추가 -> 규격 [1박스={box_qty}개입 / 기준={ratio_log_text}] (초기보유: {qty}개)",
+                            "작업자": "관리자"
+                        }])
+                        df_logs = pd.concat([df_logs, new_log], ignore_index=True)
+                        conn.update(worksheet="logs", data=df_logs)
+                        st.session_state["df_logs_cached"] = df_logs
+                        
+                        st.cache_data.clear()
+                        st.success(f"새로운 물품 [{name}]의 마스터 규격이 성공적으로 등록되었습니다.")
+                        st.rerun()
+
+    with sub_tab4:
+        st.subheader("📜 재고 수불 및 변경 이력 로그")
+        if not df_logs.empty:
+            st.dataframe(df_logs.iloc[::-1], use_container_width=True, hide_index=True)
+        else:
+            st.info("기록된 변경 이력이 없습니다.")
+
+st.markdown("---")
+st.markdown(
+    """
+    <div style='
+        text-align: center; 
+        padding: 10px; 
+        background-color: #f8f9fa; 
+        border: 1px solid #e9ecef; 
+        border-radius: 6px; 
+        color: #868e96; 
+        font-size: 0.8rem;
+        margin-top: 20px;
+    '>
+        <p style='margin: 0;'>© 2026 Integrated Logistics Management System | Developed for Team Efficiency</p>
+        <p style='margin: 0; font-size: 0.75rem; color: #adb5bd;'>Version 2.1 • All rights reserved</p>
+        <p style='margin: 0; font-size: 0.75rem; color: #adb5bd;'>Made with Gemini 3.6 flash</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
