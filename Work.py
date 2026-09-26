@@ -110,12 +110,10 @@ def load_workers(ttl="3m"):
     return default_workers
 
 # --- [DB 함수 2] 근무 일정 데이터 로드 (Sheet1 탭) ---
-# --- [수정] 근무 일정 데이터 로드 ---
-def load_schedule_data():
+def load_schedule_data(ttl=0):
     db = {}
     try:
-        # ttl="0s" 또는 캐시 삭제를 통해 항상 최신 시트 데이터를 읽도록 설정
-        df = conn.read(worksheet="Sheet1", ttl=0) 
+        df = conn.read(worksheet="Sheet1", ttl=ttl) 
         if df is not None and not df.empty and 'date' in df.columns:
             for _, row in df.iterrows():
                 if pd.notna(row['date']) and pd.notna(row['workers']):
@@ -123,7 +121,6 @@ def load_schedule_data():
             return db
     except Exception as e:
         st.sidebar.error(f"⚠️ Sheet1 데이터 로드 실패: {e}")
-        # 로드 실패 시 기존 세션 값이 있다면 유지
         if 'db' in st.session_state and st.session_state['db']:
             return st.session_state['db']
     return db
@@ -210,12 +207,11 @@ if is_admin:
 else:
     st.sidebar.info("👁️ 조회 전용 모드")
 
-# --- 🔄 관리자 전용 데이터 다시 불러오기 버튼 (수정된 안전 로직) ---
+# --- 🔄 관리자 전용 데이터 다시 불러오기 버튼 ---
 if is_admin:
     if st.sidebar.button("🔄 시트 데이터 다시 불러오기", use_container_width=True):
         st.cache_data.clear()
         
-        # ttl=0으로 바로 새로운 데이터를 가져와 세션에 직접 할당
         st.session_state['worker_colors'] = load_workers(ttl=0)
         st.session_state['db'] = load_schedule_data(ttl=0)
         st.session_state['anti_db'] = load_anti_data(ttl=0)
@@ -238,39 +234,41 @@ if main_menu == "📅 근무 일정 관리":
     
     tabs = st.tabs(tab_titles)
 
-    def save_to_sheets(date_str, workers_list):
+    # --- [안전장치 적용] 근무 일정 구글 시트 동기화 ---
+    def sync_schedule_to_sheets():
         try:
-            new_db = st.session_state['db'].copy()
-            new_db[date_str] = workers_list
-            rows = [{"date": d, "workers": ",".join(ws)} for d, ws in new_db.items() if ws]
+            rows = [{"date": d, "workers": ",".join(ws)} for d, ws in st.session_state['db'].items() if ws]
+            if not rows:
+                st.warning("⚠️ 저장할 근무 데이터가 없거나 비어 있습니다. 덮어쓰기를 방지합니다.")
+                return False
             df = pd.DataFrame(rows)
             conn.update(worksheet="Sheet1", data=df)
-            st.session_state['db'] = new_db
-            st.cache_data.clear()
+            return True
         except Exception as e:
-            st.error(f"저장 중 오류가 발생했습니다. ({e})")
+            st.error(f"Sheet1 저장 중 오류가 발생했습니다: {e}")
+            return False
 
-    def save_anti_to_sheets(date_str, anti_workers_list):
+    # --- [안전장치 적용] 날짜별 안티 구글 시트 동기화 ---
+    def sync_anti_to_sheets():
         try:
-            new_anti = st.session_state['anti_db'].copy()
-            new_anti[date_str] = anti_workers_list
-            rows = [{"date": d, "workers": ",".join(ws)} for d, ws in new_anti.items() if ws]
+            rows = [{"date": d, "workers": ",".join(ws)} for d, ws in st.session_state['anti_db'].items() if ws]
+            if not rows:
+                st.warning("⚠️ 저장할 안티 일정 데이터가 없거나 비어 있습니다.")
+                return True
             df = pd.DataFrame(rows)
             conn.update(worksheet="anti", data=df)
-            st.session_state['anti_db'] = new_anti
-
-            current_assigned = st.session_state['db'].get(date_str, [])
-            updated_assigned = [w for w in current_assigned if w not in anti_workers_list]
-            if len(current_assigned) != len(updated_assigned):
-                save_to_sheets(date_str, updated_assigned)
-                
-            st.cache_data.clear()
+            return True
         except Exception as e:
-            st.error(f"안티 일정 저장 오류. 시트에 'anti' 탭을 확인하세요. ({e})")
+            st.error(f"anti 탭 저장 중 오류가 발생했습니다: {e}")
+            return False
 
+    # --- [안전장치 적용] 고정 안티 요일 동기화 ---
     def save_anti_days_to_sheets(anti_days_dict):
         try:
             rows = [{"worker": w, "days": ",".join(ds)} for w, ds in anti_days_dict.items() if ds]
+            if not rows:
+                st.warning("⚠️ 저장할 고정 안티 요일 데이터가 비어 있어 구글 시트 반영을 중지합니다.")
+                return
             df = pd.DataFrame(rows)
             conn.update(worksheet="anti_days", data=df)
             st.session_state['anti_days_db'] = anti_days_dict
@@ -294,7 +292,18 @@ if main_menu == "📅 근무 일정 관리":
         col_cal, col_stat = st.columns([4, 1])
 
         with col_cal:
-            st.title(f"{selected_month}월 근무 일정 현황")
+            col_hdr1, col_hdr2 = st.columns([3, 1])
+            with col_hdr1:
+                st.title(f"{selected_month}월 근무 일정 현황")
+            with col_hdr2:
+                if is_admin:
+                    st.write("")
+                    if st.button("💾 변경사항 구글 시트에 저장", type="primary", use_container_width=True):
+                        s1_ok = sync_schedule_to_sheets()
+                        s2_ok = sync_anti_to_sheets()
+                        if s1_ok and s2_ok:
+                            st.cache_data.clear()
+                            st.success("모든 변경사항이 구글 시트에 안전하게 반영되었습니다!")
 
             if view_mode == "📱 리스트 보기 (모바일)":
                 for d in range(1, last_day.day + 1):
@@ -324,7 +333,6 @@ if main_menu == "📅 근무 일정 관리":
                     
                     if not is_off:
                         available_options = [w for w in WORKER_COLORS.keys() if w not in all_anti]
-                        # WORKER_COLORS.keys() 및 available_options에 실제 존재하는 이름만 추출
                         valid_assigned = [w for w in assigned if w in available_options]
 
                         if is_admin:
@@ -333,14 +341,15 @@ if main_menu == "📅 근무 일정 관리":
                                 st.caption("🟢 근무 배정")
                                 new = st.multiselect(f"m_edit_{d}", available_options, default=valid_assigned, key=f"m_{d_str}", label_visibility="collapsed")
                                 if new != assigned:
-                                    save_to_sheets(d_str, new)
-                                    st.rerun()
+                                    st.session_state['db'][d_str] = new
                             with col_m2:
                                 st.caption("🚫 수동 안티 지정")
                                 new_anti = st.multiselect(f"m_anti_{d}", list(WORKER_COLORS.keys()), default=anti_assigned, key=f"m_anti_{d_str}", label_visibility="collapsed")
                                 if new_anti != anti_assigned:
-                                    save_anti_to_sheets(d_str, new_anti)
-                                    st.rerun()
+                                    st.session_state['anti_db'][d_str] = new_anti
+                                    # 안티 지정 시 기존 근무 배정 자동 정제
+                                    updated_assigned = [w for w in st.session_state['db'].get(d_str, []) if w not in new_anti]
+                                    st.session_state['db'][d_str] = updated_assigned
                         else:
                             if valid_assigned:
                                 tags = "".join([f"<span class='worker-tag' style='background-color:{WORKER_COLORS.get(n, '#eee')}'>{n}</span>" for n in valid_assigned])
@@ -348,7 +357,7 @@ if main_menu == "📅 근무 일정 관리":
                             else:
                                 st.caption("배정 인원 없음")
                                 
-                            if is_admin and all_anti:
+                            if all_anti:
                                 anti_tags = ""
                                 for n in all_anti:
                                     if n in fixed_anti_workers:
@@ -394,31 +403,28 @@ if main_menu == "📅 근무 일정 관리":
                                 
                                 if not is_off:
                                     available_options = [w for w in WORKER_COLORS.keys() if w not in all_anti]
-    
-                                    # 💡 수정: available_options에 실제로 들어있는 이름만 default 값으로 지정[cite: 1]
                                     valid_assigned = [w for w in assigned if w in available_options]
 
                                     if is_admin:
                                         st.caption("🟢 근무")
                                         new = st.multiselect(f"p_edit_{day_counter}", available_options, default=valid_assigned, key=f"p_{t_str}", label_visibility="collapsed")
                                         if new != assigned:
-                                            save_to_sheets(t_str, new)
-                                            st.rerun()
+                                            st.session_state['db'][t_str] = new
 
                                         st.caption("🚫 안티")
                                         new_anti = st.multiselect(f"p_anti_{day_counter}", list(WORKER_COLORS.keys()), default=anti_assigned, key=f"p_anti_{t_str}", label_visibility="collapsed")
                                         if new_anti != anti_assigned:
-                                            save_anti_to_sheets(t_str, new_anti)
-                                            st.rerun()
+                                            st.session_state['anti_db'][t_str] = new_anti
+                                            updated_assigned = [w for w in st.session_state['db'].get(t_str, []) if w not in new_anti]
+                                            st.session_state['db'][t_str] = updated_assigned
                                     else:
                                         for n in valid_assigned:
                                             st.markdown(f"<span class='worker-tag' style='background-color:{WORKER_COLORS.get(n, '#eee')}'>{n}</span>", unsafe_allow_html=True)
-                                        if is_admin:    
-                                            for n in all_anti:
-                                                if n in fixed_anti_workers:
-                                                    st.markdown(f"<span class='fixed-anti-tag'>🚫[고정] {n}</span>", unsafe_allow_html=True)
-                                                else:
-                                                    st.markdown(f"<span class='anti-tag'>🚫 {n}</span>", unsafe_allow_html=True)
+                                        for n in all_anti:
+                                            if n in fixed_anti_workers:
+                                                st.markdown(f"<span class='fixed-anti-tag'>🚫[고정] {n}</span>", unsafe_allow_html=True)
+                                            else:
+                                                st.markdown(f"<span class='anti-tag'>🚫 {n}</span>", unsafe_allow_html=True)
                                 day_counter += 1
 
         with col_stat:
@@ -515,7 +521,6 @@ if main_menu == "📅 근무 일정 관리":
             st.subheader("✏️ 기존 근무자 수정 및 삭제")
             
             if WORKER_COLORS:
-                # 색상 변경 및 삭제를 위한 드롭다운
                 selected_worker = st.selectbox("수정 또는 삭제할 근무자를 선택하세요", list(WORKER_COLORS.keys()))
                 
                 if selected_worker:
@@ -534,7 +539,6 @@ if main_menu == "📅 근무 일정 관리":
                             if not new_name_clean:
                                 st.error("이름은 공백일 수 없습니다.")
                             else:
-                                # 기존 키 제거 후 새 정보 반영
                                 new_worker_colors = {}
                                 for k, v in WORKER_COLORS.items():
                                     if k == selected_worker:
@@ -543,28 +547,36 @@ if main_menu == "📅 근무 일정 관리":
                                         new_worker_colors[k] = v
                                 
                                 rows = [{"name": k, "color": v} for k, v in new_worker_colors.items()]
-                                try:
-                                    conn.update(worksheet="workers", data=pd.DataFrame(rows))
-                                    st.session_state['worker_colors'] = new_worker_colors
-                                    st.cache_data.clear()
-                                    st.success(f"[{new_name_clean}] 님의 정보가 수정되었습니다.")
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"구글 시트 저장 실패: {e}")
+                                # 안전장치: 빈 데이터 덮어쓰기 방지
+                                if not rows:
+                                    st.error("⚠️ 저장할 근무자 목록이 비어있어 저장 작업을 중단합니다.")
+                                else:
+                                    try:
+                                        conn.update(worksheet="workers", data=pd.DataFrame(rows))
+                                        st.session_state['worker_colors'] = new_worker_colors
+                                        st.cache_data.clear()
+                                        st.success(f"[{new_name_clean}] 님의 정보가 수정되었습니다.")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"구글 시트 저장 실패: {e}")
                                     
                     # [근무자 삭제]
                     with btn_col2:
                         if st.button("🗑️ 해당 근무자 삭제", type="primary", use_container_width=True):
                             new_worker_colors = {k: v for k, v in WORKER_COLORS.items() if k != selected_worker}
                             rows = [{"name": k, "color": v} for k, v in new_worker_colors.items()]
-                            try:
-                                conn.update(worksheet="workers", data=pd.DataFrame(rows))
-                                st.session_state['worker_colors'] = new_worker_colors
-                                st.cache_data.clear()
-                                st.success(f"[{selected_worker}] 님이 명단에서 삭제되었습니다.")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"구글 시트 삭제 처리 실패: {e}")
+                            # 안전장치: 전체 삭제로 빈 DataFrame 저장되는 현상 방지
+                            if not rows:
+                                st.error("⚠️ 전체 삭제로 인해 명단이 완전히 비게 됩니다. 안전을 위해 1명 이상의 명단을 유지해야 합니다.")
+                            else:
+                                try:
+                                    conn.update(worksheet="workers", data=pd.DataFrame(rows))
+                                    st.session_state['worker_colors'] = new_worker_colors
+                                    st.cache_data.clear()
+                                    st.success(f"[{selected_worker}] 님이 명단에서 삭제되었습니다.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"구글 시트 삭제 처리 실패: {e}")
 
                 st.divider()
                 st.caption("📋 현재 등록된 전체 명단 현황")
@@ -590,18 +602,22 @@ if main_menu == "📅 근무 일정 관리":
                     if clean_name and clean_name not in WORKER_COLORS:
                         WORKER_COLORS[clean_name] = new_w_color
                         rows = [{"name": k, "color": v} for k, v in WORKER_COLORS.items()]
-                        try:
-                            conn.update(worksheet="workers", data=pd.DataFrame(rows))
-                            st.session_state['worker_colors'] = WORKER_COLORS
-                            st.cache_data.clear()
-                            st.success(f"새 근무자 [{clean_name}] 님이 추가되었습니다.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"구글 시트 'workers' 탭 업데이트 실패: {e}")
+                        if not rows:
+                            st.error("⚠️ 저장할 데이터가 비어있습니다.")
+                        else:
+                            try:
+                                conn.update(worksheet="workers", data=pd.DataFrame(rows))
+                                st.session_state['worker_colors'] = WORKER_COLORS
+                                st.cache_data.clear()
+                                st.success(f"새 근무자 [{clean_name}] 님이 추가되었습니다.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"구글 시트 'workers' 탭 업데이트 실패: {e}")
                     elif clean_name in WORKER_COLORS:
                         st.warning("이미 존재하는 근무자 이름입니다.")
                     else:
                         st.warning("올바른 근무자 이름을 입력해 주세요.")
+
 # ==========================================
 # 메뉴 B: 📦 재고 관리 시스템
 # ==========================================
@@ -743,8 +759,11 @@ elif main_menu == "📦 재고 관리 시스템":
                         st.success(f"{selected_item} 상품이 {detail_text}만큼 출고 완료되었습니다.")
                     
                     df_inv.at[idx, "수량"] = new_qty
-                    conn.update(worksheet="inventory", data=df_inv)
-                    st.session_state["df_inv_cached"] = df_inv
+                    
+                    # 안전장치: 재고 데이터 덮어쓰기 방지
+                    if not df_inv.empty:
+                        conn.update(worksheet="inventory", data=df_inv)
+                        st.session_state["df_inv_cached"] = df_inv
                     
                     new_log = pd.DataFrame([{
                         "일시": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -754,8 +773,11 @@ elif main_menu == "📦 재고 관리 시스템":
                         "작업자": "관리자"
                     }])
                     df_logs = pd.concat([df_logs, new_log], ignore_index=True)
-                    conn.update(worksheet="logs", data=df_logs)
-                    st.session_state["df_logs_cached"] = df_logs
+                    
+                    # 안전장치: 로그 데이터 덮어쓰기 방지
+                    if not df_logs.empty:
+                        conn.update(worksheet="logs", data=df_logs)
+                        st.session_state["df_logs_cached"] = df_logs
                     
                     st.cache_data.clear()
                     st.rerun()
@@ -799,8 +821,11 @@ elif main_menu == "📦 재고 관리 시스템":
                             "개당음료수": final_ratio
                         }])
                         df_inv = pd.concat([df_inv, new_row], ignore_index=True)
-                        conn.update(worksheet="inventory", data=df_inv)
-                        st.session_state["df_inv_cached"] = df_inv
+                        
+                        # 안전장치: 재고 데이터 덮어쓰기 방지
+                        if not df_inv.empty:
+                            conn.update(worksheet="inventory", data=df_inv)
+                            st.session_state["df_inv_cached"] = df_inv
                         
                         ratio_log_text = "계산제외" if final_ratio == 0 else f"{final_ratio}잔"
                         new_log = pd.DataFrame([{
@@ -811,8 +836,11 @@ elif main_menu == "📦 재고 관리 시스템":
                             "작업자": "관리자"
                         }])
                         df_logs = pd.concat([df_logs, new_log], ignore_index=True)
-                        conn.update(worksheet="logs", data=df_logs)
-                        st.session_state["df_logs_cached"] = df_logs
+                        
+                        # 안전장치: 로그 데이터 덮어쓰기 방지
+                        if not df_logs.empty:
+                            conn.update(worksheet="logs", data=df_logs)
+                            st.session_state["df_logs_cached"] = df_logs
                         
                         st.cache_data.clear()
                         st.success(f"새로운 물품 [{name}]의 마스터 규격이 성공적으로 등록되었습니다.")
