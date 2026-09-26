@@ -288,7 +288,7 @@ if main_menu == "📅 근무 일정 관리":
         col_cal, col_stat = st.columns([4, 1])
 
         with col_cal:
-            st.title(f"{selected_month}월 근무 및 안티 현황")
+            st.title(f"{selected_month}월 근무 일정 현황")
 
             if view_mode == "📱 리스트 보기 (모바일)":
                 for d in range(1, last_day.day + 1):
