@@ -498,93 +498,104 @@ if main_menu == "📅 근무 일정 관리":
                     save_anti_days_to_sheets(updated_anti_days)
                     st.rerun()
 
-            # ----------------------------------------------------
-            # TAB 3: 👥 관리자 전용 - 근무자 명단 및 색상 관리
-            # ----------------------------------------------------
-            with tabs[2]:
-                st.title("👥 근무자 명단 및 색상 관리 (`workers` 탭 연동)")
-                st.info("구글 시트의 `workers` 탭 데이터를 실시간 관리합니다. 이름/색상 수정 및 신규 추가, 삭제가 가능합니다.")
+        # ----------------------------------------------------
+        # TAB 3: 👥 관리자 전용 - 근무자 명단 및 색상 관리
+        # ----------------------------------------------------
+        with tabs[2]:
+            st.title("👥 근무자 명단 및 색상 관리 (`workers` 탭 연동)")
+            st.info("구글 시트의 `workers` 탭 데이터를 실시간 관리합니다. 이름/색상 수정 및 신규 추가, 삭제가 가능합니다.")
+            
+            # 1. 기존 근무자 정보 수정 및 삭제
+            st.subheader("✏️ 기존 근무자 수정 및 삭제")
+            
+            if WORKER_COLORS:
+                # 색상 변경 및 삭제를 위한 드롭다운
+                selected_worker = st.selectbox("수정 또는 삭제할 근무자를 선택하세요", list(WORKER_COLORS.keys()))
                 
-                # 1. 기존 근무자 정보 수정 및 삭제 Section
-                st.subheader("✏️ 기존 근무자 수정 및 삭제")
-                
-                if WORKER_COLORS:
-                    # 데이터 수정용 Dataframe 구성
-                    workers_data = [{"이름": k, "태그색상": v} for k, v in WORKER_COLORS.items()]
-                    df_workers = pd.DataFrame(workers_data)
+                if selected_worker:
+                    col_e1, col_e2 = st.columns(2)
+                    with col_e1:
+                        edit_name = st.text_input("이름 변경", value=selected_worker, key=f"edit_name_{selected_worker}")
+                    with col_e2:
+                        edit_color = st.color_picker("태그 색상 변경", value=WORKER_COLORS[selected_worker], key=f"edit_color_{selected_worker}")
                     
-                    # Streamlit data_editor를 통한 직관적인 데이터 수정
-                    edited_df = st.data_editor(
-                        df_workers,
-                        num_rows="dynamic", # 행 추가/삭제 허용
-                        column_config={
-                            "이름": st.column_config.TextColumn("근무자 이름", required=True),
-                            "태그색상": st.column_config.ColorPickerColumn("태그 색상", required=True)
-                        },
-                        use_container_width=True,
-                        key="worker_editor"
-                    )
+                    btn_col1, btn_col2 = st.columns(2)
                     
-                    if st.button("💾 근무자 명단 변경사항 저장", use_container_width=True):
-                        try:
-                            # 수정된 데이터 정제
-                            new_worker_colors = {}
-                            rows_to_save = []
-                            
-                            for _, row in edited_df.iterrows():
-                                w_name = str(row["이름"]).strip()
-                                w_color = str(row["태그색상"]).strip()
-                                if w_name and w_name != "nan":
-                                    new_worker_colors[w_name] = w_color
-                                    rows_to_save.append({"name": w_name, "color": w_color})
-                            
-                            if not rows_to_save:
-                                st.error("최소 한 명 이상의 근무자가 존재해야 합니다.")
+                    # [수정 저장]
+                    with btn_col1:
+                        if st.button("💾 변경사항 저장", use_container_width=True):
+                            new_name_clean = edit_name.strip()
+                            if not new_name_clean:
+                                st.error("이름은 공백일 수 없습니다.")
                             else:
-                                # 구글 시트 업데이트
-                                conn.update(worksheet="workers", data=pd.DataFrame(rows_to_save))
+                                # 기존 키 제거 후 새 정보 반영
+                                new_worker_colors = {}
+                                for k, v in WORKER_COLORS.items():
+                                    if k == selected_worker:
+                                        new_worker_colors[new_name_clean] = edit_color
+                                    else:
+                                        new_worker_colors[k] = v
                                 
-                                # 세션 상태 갱신
-                                st.session_state['worker_colors'] = new_worker_colors
-                                st.cache_data.clear()
-                                
-                                st.success("근무자 명단 및 색상이 성공적으로 업데이트되었습니다!")
-                                st.rerun()
-                        except Exception as e:
-                            st.error(f"구글 시트 저장 중 오류가 발생했습니다: {e}")
-                else:
-                    st.warning("등록된 근무자가 없습니다. 아래에서 신규 근무자를 추가해 주세요.")
-                    
-                st.divider()
-                
-                # 2. 신규 근무자 간편 추가 Section
-                with st.form("add_worker_form", clear_on_submit=True):
-                    st.subheader("➕ 신규 근무자 추가")
-                    col_w1, col_w2 = st.columns(2)
-                    with col_w1:
-                        new_w_name = st.text_input("근무자 이름")
-                    with col_w2:
-                        new_w_color = st.color_picker("태그 배경 색상", "#E6E6FA")
-                    
-                    add_w_btn = st.form_submit_button("신규 근무자 추가 및 시트 저장")
-                    if add_w_btn:
-                        clean_name = new_w_name.strip() if new_w_name else ""
-                        if clean_name and clean_name not in WORKER_COLORS:
-                            WORKER_COLORS[clean_name] = new_w_color
-                            rows = [{"name": k, "color": v} for k, v in WORKER_COLORS.items()]
+                                rows = [{"name": k, "color": v} for k, v in new_worker_colors.items()]
+                                try:
+                                    conn.update(worksheet="workers", data=pd.DataFrame(rows))
+                                    st.session_state['worker_colors'] = new_worker_colors
+                                    st.cache_data.clear()
+                                    st.success(f"[{new_name_clean}] 님의 정보가 수정되었습니다.")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"구글 시트 저장 실패: {e}")
+                                    
+                    # [근무자 삭제]
+                    with btn_col2:
+                        if st.button("🗑️ 해당 근무자 삭제", type="primary", use_container_width=True):
+                            new_worker_colors = {k: v for k, v in WORKER_COLORS.items() if k != selected_worker}
+                            rows = [{"name": k, "color": v} for k, v in new_worker_colors.items()]
                             try:
                                 conn.update(worksheet="workers", data=pd.DataFrame(rows))
-                                st.session_state['worker_colors'] = WORKER_COLORS
+                                st.session_state['worker_colors'] = new_worker_colors
                                 st.cache_data.clear()
-                                st.success(f"새 근무자 [{clean_name}] 님이 추가되었습니다.")
+                                st.success(f"[{selected_worker}] 님이 명단에서 삭제되었습니다.")
                                 st.rerun()
                             except Exception as e:
-                                st.error(f"구글 시트 'workers' 탭 업데이트 실패: {e}")
-                        elif clean_name in WORKER_COLORS:
-                            st.warning("이미 존재는 근무자 이름입니다. 위 표에서 색상을 수정해 주세요.")
-                        else:
-                            st.warning("올바른 근무자 이름을 입력해 주세요.")
+                                st.error(f"구글 시트 삭제 처리 실패: {e}")
 
+                st.divider()
+                st.caption("📋 현재 등록된 전체 명단 현황")
+                df_workers_list = pd.DataFrame([{"이름": k, "색상코드": v} for k, v in WORKER_COLORS.items()])
+                st.dataframe(df_workers_list, use_container_width=True, hide_index=True)
+            else:
+                st.warning("등록된 근무자가 없습니다. 아래에서 신규 근무자를 추가해 주세요.")
+                
+            st.divider()
+            
+            # 2. 신규 근무자 간편 추가
+            with st.form("add_worker_form", clear_on_submit=True):
+                st.subheader("➕ 신규 근무자 추가")
+                col_w1, col_w2 = st.columns(2)
+                with col_w1:
+                    new_w_name = st.text_input("근무자 이름")
+                with col_w2:
+                    new_w_color = st.color_picker("태그 배경 색상", "#E6E6FA")
+                
+                add_w_btn = st.form_submit_button("신규 근무자 추가 및 시트 저장")
+                if add_w_btn:
+                    clean_name = new_w_name.strip() if new_w_name else ""
+                    if clean_name and clean_name not in WORKER_COLORS:
+                        WORKER_COLORS[clean_name] = new_w_color
+                        rows = [{"name": k, "color": v} for k, v in WORKER_COLORS.items()]
+                        try:
+                            conn.update(worksheet="workers", data=pd.DataFrame(rows))
+                            st.session_state['worker_colors'] = WORKER_COLORS
+                            st.cache_data.clear()
+                            st.success(f"새 근무자 [{clean_name}] 님이 추가되었습니다.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"구글 시트 'workers' 탭 업데이트 실패: {e}")
+                    elif clean_name in WORKER_COLORS:
+                        st.warning("이미 존재하는 근무자 이름입니다.")
+                    else:
+                        st.warning("올바른 근무자 이름을 입력해 주세요.")
 # ==========================================
 # 메뉴 B: 📦 재고 관리 시스템
 # ==========================================
