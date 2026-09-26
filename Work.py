@@ -199,8 +199,10 @@ current_year = 2026
 # ==========================================
 st.sidebar.title("⚙️ 통합 관리 시스템")
 
+admin_pw = st.secrets.get("ADMIN_PASSWORD", "1142")
+
 password = st.sidebar.text_input("관리자 비밀번호", type="password")
-is_admin = (password == "1142") 
+is_admin = (password == admin_pw)
 
 if is_admin:
     st.sidebar.success("🔓 관리자 권한 활성화")
