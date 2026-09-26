@@ -833,7 +833,7 @@ st.markdown(
         margin-top: 20px;
     '>
         <p style='margin: 0;'>© 2026 Integrated Logistics Management System | Developed for Team Efficiency</p>
-        <p style='margin: 0; font-size: 0.75rem; color: #adb5bd;'>Version 2.1 • All rights reserved</p>
+        <p style='margin: 0; font-size: 0.75rem; color: #adb5bd;'>Version 2.3.1 • All rights reserved</p>
         <p style='margin: 0; font-size: 0.75rem; color: #adb5bd;'>Made with Gemini 3.6 flash</p>
     </div>
     """,
