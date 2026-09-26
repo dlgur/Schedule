@@ -356,15 +356,6 @@ if main_menu == "📅 근무 일정 관리":
                                 st.markdown(f"<div><b>근무:</b> {tags}</div>", unsafe_allow_html=True)
                             else:
                                 st.caption("배정 인원 없음")
-                                
-                            if all_anti:
-                                anti_tags = ""
-                                for n in all_anti:
-                                    if n in fixed_anti_workers:
-                                        anti_tags += f"<span class='fixed-anti-tag'>🚫[고정] {n}</span>"
-                                    else:
-                                        anti_tags += f"<span class='anti-tag'>🚫 {n}</span>"
-                                st.markdown(f"<div><b>안티:</b> {anti_tags}</div>", unsafe_allow_html=True)
                     else:
                         st.caption("휴무")
                     st.write("")
@@ -460,7 +451,7 @@ if main_menu == "📅 근무 일정 관리":
                 if filter_name != "전체보기" and name != filter_name: continue
                 count = month_workers.count(name)
                 anti_count = month_antis.count(name)
-                anti_stat_text = f" | 🚫 안티: {anti_count}회" if is_admin else ""
+                anti_stat_text = f" | 🚫 휴무: {anti_count}회" if is_admin else ""
                 st.markdown(f"""
                     <div style='background-color:{color}; padding:8px; border-radius:5px; margin-bottom:5px; color:black;'>
                         <b>{name}</b><br>
