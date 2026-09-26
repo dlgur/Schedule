@@ -110,16 +110,22 @@ def load_workers(ttl="3m"):
     return default_workers
 
 # --- [DB 함수 2] 근무 일정 데이터 로드 (Sheet1 탭) ---
-def load_schedule_data(ttl="3m"):
+# --- [수정] 근무 일정 데이터 로드 ---
+def load_schedule_data():
     db = {}
     try:
-        df = conn.read(worksheet="Sheet1", ttl=ttl) 
+        # ttl="0s" 또는 캐시 삭제를 통해 항상 최신 시트 데이터를 읽도록 설정
+        df = conn.read(worksheet="Sheet1", ttl=0) 
         if df is not None and not df.empty and 'date' in df.columns:
             for _, row in df.iterrows():
                 if pd.notna(row['date']) and pd.notna(row['workers']):
                     db[str(row['date'])] = [w.strip() for w in str(row['workers']).split(',') if w.strip()]
-    except:
-        pass
+            return db
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Sheet1 데이터 로드 실패: {e}")
+        # 로드 실패 시 기존 세션 값이 있다면 유지
+        if 'db' in st.session_state and st.session_state['db']:
+            return st.session_state['db']
     return db
 
 # --- [DB 함수 3] 날짜별 안티 일정 로드 (anti 탭) ---
