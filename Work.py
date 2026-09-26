@@ -411,11 +411,7 @@ if main_menu == "📅 근무 일정 관리":
                                     else:
                                         for n in valid_assigned:
                                             st.markdown(f"<span class='worker-tag' style='background-color:{WORKER_COLORS.get(n, '#eee')}'>{n}</span>", unsafe_allow_html=True)
-                                        for n in all_anti:
-                                            if n in fixed_anti_workers:
-                                                st.markdown(f"<span class='fixed-anti-tag'>🚫[고정] {n}</span>", unsafe_allow_html=True)
-                                            else:
-                                                st.markdown(f"<span class='anti-tag'>🚫 {n}</span>", unsafe_allow_html=True)
+
                                 day_counter += 1
 
         with col_stat:
