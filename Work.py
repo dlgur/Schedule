@@ -318,7 +318,8 @@ if main_menu == "📅 근무 일정 관리":
                     
                     if not is_off:
                         available_options = [w for w in WORKER_COLORS.keys() if w not in all_anti]
-                        valid_assigned = [w for w in assigned if w not in all_anti]
+                        # WORKER_COLORS.keys() 및 available_options에 실제 존재하는 이름만 추출
+                        valid_assigned = [w for w in assigned if w in available_options]
 
                         if is_admin:
                             col_m1, col_m2 = st.columns(2)
@@ -387,7 +388,9 @@ if main_menu == "📅 근무 일정 관리":
                                 
                                 if not is_off:
                                     available_options = [w for w in WORKER_COLORS.keys() if w not in all_anti]
-                                    valid_assigned = [w for w in assigned if w not in all_anti]
+    
+                                    # 💡 수정: available_options에 실제로 들어있는 이름만 default 값으로 지정[cite: 1]
+                                    valid_assigned = [w for w in assigned if w in available_options]
 
                                     if is_admin:
                                         st.caption("🟢 근무")
