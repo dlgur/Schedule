@@ -491,7 +491,16 @@ if main_menu == "📅 근무 일정 관리":
     # ----------------------------------------------------
     with tabs[0]:
         view_mode = st.sidebar.radio(T("화면 모드"), ["📅 달력 보기 (PC)", "📱 리스트 보기 (모바일)"], index=1, format_func=T)
-        selected_month = st.sidebar.selectbox(T("월 선택"), list(range(1, 13)), index=today_val.month - 1, format_func=lambda m: (calendar.month_name[m] if st.session_state.get("ui_language") == "English" else f"{m}월"))
+        selected_month = st.sidebar.selectbox(
+            T("월 선택"),
+            list(range(1, 13)),
+            index=today_val.month - 1,
+            format_func=lambda m: (
+                datetime(2000, m, 1).strftime("%B")
+                if st.session_state.get("ui_language") == "English"
+                else f"{m}월"
+            )
+        )
         filter_name = st.sidebar.selectbox(T("🔍 근무자 필터링"), ["전체보기"] + list(WORKER_COLORS.keys()), format_func=T)
 
         first_day = date(current_year, selected_month, 1)
